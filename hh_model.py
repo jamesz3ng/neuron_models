@@ -2,10 +2,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # constants
-C_m = 1.0
-g_Na = 120.0
-g_K = 36.0
-g_L = 0.3
+C_m = 1.0  # nF/mm^2
+g_Na = 120.0  # uS/cm^2
+g_K = 36.0  # uS/cm^2
+g_L = 0.3  # uS/cm^2
 
 # reverse potential (mV)
 E_Na = 50.0
@@ -17,32 +17,32 @@ E_L = -54.387
 
 
 def alpha_n(V):
-    return -0.01 * (V + 60) / (np.exp((V + 60) / -10) - 1)
+    return -0.01 * (V + 55) / (np.exp((V + 55) / -10) - 1)
 
 
 def beta_n(V):
-    return 0.125 * np.exp(V + 70 / 80)
+    return 0.125 * np.exp((V + 65) / 80)
 
 
 def alpha_m(V):
-    return -0.1 * (V + 45) / (np.exp((V + 45) / -10) - 1)
+    return -0.1 * (V + 40) / (np.exp((V + 40) / -10) - 1)
 
 
 def beta_m(V):
-    return 4 * np.exp((V + 70) / -18)
+    return 4 * np.exp((V + 65) / -18)
 
 
 def alpha_h(V):
-    return 0.07 * np.exp((V + 70) / -20)
+    return 0.07 * np.exp((V + 65) / -20)
 
 
 def beta_h(V):
-    return 1 / (1 + np.exp((V + 40) / -10))
+    return 1 / (1 + np.exp((V + 35) / -10))
 
 
 def main():
     dt = 0.01  # ms
-    T = 50.0
+    T = 100.0
     t = np.arange(0, T, dt)
 
     V = np.zeros(len(t))
@@ -51,13 +51,15 @@ def main():
     n = np.zeros(len(t))
 
     # set initial resting positions
+    # https://goldmanlab.faculty.ucdavis.edu/wp-content/uploads/sites/263/2016/07/HodgkinHuxley.pdf
+    # values taken from above
     V[0] = -65.0
-    m[0] = 0.05
-    h[0] = 0.6
-    n[0] = 0.32
+    m[0] = 0.0529
+    h[0] = 0.5961
+    n[0] = 0.3177
 
     I_inj = np.zeros(len(t))
-    I_inj[int(10 / dt) : int(11 / dt)] = 10
+    I_inj[int(20 / dt) : int(21 / dt)] = 200
 
     for i in range(1, len(t)):
         V_old = V[i - 1]
@@ -79,6 +81,8 @@ def main():
 
         dV = (I_inj[i - 1] - I_Na - I_K - I_L) / C_m
         V[i] = V_old + dV * dt
+
+    print(V)
 
     plt.figure(figsize=(10, 6))
 
