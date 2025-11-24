@@ -1,5 +1,5 @@
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 # constants
 C_m = 1.0
@@ -16,7 +16,87 @@ E_L = -54.387
 # k activation
 
 
+def alpha_n(V):
+    return -0.01 * (V + 60) / (np.exp((V + 60) / -10) - 1)
 
+
+def beta_n(V):
+    return 0.125 * np.exp(V + 70 / 80)
+
+
+def alpha_m(V):
+    return -0.1 * (V + 45) / (np.exp((V + 45) / -10) - 1)
+
+
+def beta_m(V):
+    return 4 * np.exp((V + 70) / -18)
+
+
+def alpha_h(V):
+    return 0.07 * np.exp((V + 70) / -20)
+
+
+def beta_h(V):
+    return 1 / (1 + np.exp((V + 40) / -10))
+
+
+def main():
+    dt = 0.01  # ms
+    T = 50.0
+    t = np.arange(0, T, dt)
+
+    V = np.zeros(len(t))
+    m = np.zeros(len(t))
+    h = np.zeros(len(t))
+    n = np.zeros(len(t))
+
+    # set initial resting positions
+    V[0] = -65.0
+    m[0] = 0.05
+    h[0] = 0.6
+    n[0] = 0.32
+
+    I_inj = np.zeros(len(t))
+    I_inj[int(10 / dt) : int(11 / dt)] = 10
+
+    for i in range(1, len(t)):
+        V_old = V[i - 1]
+        m_old = m[i - 1]
+        h_old = h[i - 1]
+        n_old = n[i - 1]
+
+        I_Na = g_Na * (m_old**3) * h_old * (V_old - E_Na)
+        I_K = g_K * (n_old**4) * (V_old - E_K)
+        I_L = g_L * (V_old - E_L)
+
+        dm = alpha_m(V_old) * (1 - m_old) - beta_m(V_old) * m_old
+        dh = alpha_h(V_old) * (1 - h_old) - beta_h(V_old) * h_old
+        dn = alpha_n(V_old) * (1 - n_old) - beta_n(V_old) * n_old
+
+        m[i] = m_old + dm * dt
+        h[i] = h_old + dh * dt
+        n[i] = n_old + dn * dt
+
+        dV = (I_inj[i - 1] - I_Na - I_K - I_L) / C_m
+        V[i] = V_old + dV * dt
+
+    plt.figure(figsize=(10, 6))
+
+    plt.subplot(2, 1, 1)
+    plt.plot(t, V, "b", lw=2)
+    plt.ylabel("Membrane Potential (mV)")
+    plt.title("Hodgkin-Huxley Action Potential")
+    plt.grid(True)
+
+    plt.subplot(2, 1, 2)
+    plt.plot(t, I_inj, "r", lw=2)
+    plt.xlabel("Time")
+    plt.ylabel("Injected Current")
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
+    main()
