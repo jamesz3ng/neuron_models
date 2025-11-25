@@ -24,7 +24,7 @@ def alpha_n(V):
 
 
 def beta_n(V):
-    return 0.125 * np.exp((V + 65) / 80)
+    return 0.125 * np.exp((V + 65) / -80)
 
 
 def alpha_m(V):
@@ -43,6 +43,12 @@ def beta_h(V):
     return 1 / (1 + np.exp((V + 35) / -10))
 
 
+def create_square_pulse(t, start, end, amplitude, dt):
+    pulse = np.zeros_like(t)
+    pulse[int(start / dt) : int(end / dt)] = amplitude
+    return pulse
+
+
 def main():
     dt = 0.01  # ms
     T = 100.0
@@ -59,8 +65,7 @@ def main():
     h[0] = 0.5961
     n[0] = 0.3177
 
-    I_inj = np.zeros(len(t))
-    I_inj[int(20 / dt) : int(21 / dt)] = 200
+    I_inj = create_square_pulse(t, 20, 60, 20, dt)
 
     # Using the Euler forward method
     for i in range(1, len(t)):
@@ -95,7 +100,7 @@ def main():
     ax1_right.set_ylabel("Gating Probability")
     ax1_right.set_ylim(0, 1.1)
 
-    gates = {"m": (m, "green"), "n": (n, "red"), "h": (h, "purple")}
+    gates = {"m": (m, "green"), "h": (h, "purple"), "n": (n, "red")}
 
     for name, (data, color) in gates.items():
         ax1_right.plot(t, data, color=color, alpha=0.3, label=f"{name} gate")
@@ -109,11 +114,13 @@ def main():
 
     ax2.plot(t, I_inj, color="Red")
     ax2.set_xlabel("Time")
-    ax2.set_ylabel("Injeted Current")
+    ax2.set_ylabel("Injected Current")
+    ax2.set_title("Current Injection")
     ax2.grid(True)
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig("hh_model.png")
+    # plt.show()
 
 
 if __name__ == "__main__":
