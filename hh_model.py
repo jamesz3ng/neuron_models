@@ -15,6 +15,21 @@ E_Na = 50.0
 E_K = -77.0
 E_L = -54.387
 
+# cabel geometry
+
+length = 2.0  # cm
+diameter = 0.05  #
+radius = diameter / 2
+r_a = 35.4  # axial resistivity
+
+# discretization
+n_spatial = 100
+dx = length / n_spatial
+dt = 0.01
+T = 50.0
+
+diffusion_coeff = radius / (2 * r_a * dx**2 + C_m)
+
 # rate functions
 # k activation
 
@@ -50,29 +65,33 @@ def create_square_pulse(t, start, end, amplitude, dt):
 
 
 def main():
-    dt = 0.01  # ms
-    T = 100.0
+    n_time = int(T / dt)
     t = np.arange(0, T, dt)
+    x = np.linspace(0, length, n_spatial)
 
-    V = np.zeros(len(t))
-    m = np.zeros(len(t))
-    h = np.zeros(len(t))
-    n = np.zeros(len(t))
+    V = np.zeros((n_time, n_spatial))
+    m = np.zeros((n_time, n_spatial))
+    h = np.zeros((n_time, n_spatial))
+    n = np.zeros((n_time, n_spatial))
 
     # set initial resting positions
-    V[0] = -65.0
-    m[0] = 0.0529
-    h[0] = 0.5961
-    n[0] = 0.3177
+    V[0, :] = -65.0
+    m[0, :] = 0.0529
+    h[0, :] = 0.5961
+    n[0, :] = 0.3177
 
-    I_inj = create_square_pulse(t, 20, 60, 20, dt)
+    # I_inj = create_square_pulse(t, 20, 60, 20, dt)
+    I_inj = np.zeros((n_time, n_spatial))
+    start_idx = int(20 / dt)
+    end_idx = int(30 / dt)
+    I_inj[start_idx:end_idx, 0] = 20.0
 
     # Using the Euler forward method
     for i in range(1, len(t)):
-        V_old = V[i - 1]
-        m_old = m[i - 1]
-        h_old = h[i - 1]
-        n_old = n[i - 1]
+        V_old = V[i - 1, :]
+        m_old = m[i - 1, :]
+        h_old = h[i - 1, :]
+        n_old = n[i - 1, :]
 
         I_Na = g_Na * (m_old**3) * h_old * (V_old - E_Na)
         I_K = g_K * (n_old**4) * (V_old - E_K)
@@ -82,45 +101,68 @@ def main():
         dh = alpha_h(V_old) * (1 - h_old) - beta_h(V_old) * h_old
         dn = alpha_n(V_old) * (1 - n_old) - beta_n(V_old) * n_old
 
-        m[i] = m_old + dm * dt
-        h[i] = h_old + dh * dt
-        n[i] = n_old + dn * dt
+        m[i, :] = m_old + dm * dt
+        h[i, :] = h_old + dh * dt
+        n[i, :] = n_old + dn * dt
 
-        dV = (I_inj[i - 1] - I_Na - I_K - I_L) / C_m
-        V[i] = V_old + dV * dt
+        # cable equation: spatial diffusion term
+        d2V = np.zeros(n_spatial)
+        d2V[1:-1] = V_old[2:] - 2 * V_old[1:-1] + V_old[:-2]
+        d2V[0] = V_old[1] - V_old[0]
+        d2V[-1] = V_old[-2] - V_old[-1]
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6), sharex=False)
+        dV = (diffusion_coeff * d2V + I_inj[i - 1, :] - I_Na - I_K - I_L) / C_m
 
-    ax1.plot(t, V, color="blue")
-    # ax1.plot(t, m_p, color="green", alpha=0.3, label="m gate")
-    # ax1.plot(t, n_p, color="red", alpha=0.3, label="n gate")
-    # ax1.plot(t, h_p, color="purple", alpha=0.3, label="h gate")
+        V[i, :] = V_old + dV * dt
 
-    ax1_right = ax1.twinx()
-    ax1_right.set_ylabel("Gating Probability")
-    ax1_right.set_ylim(0, 1.1)
+    # 1. Space-time plot (heatmap)
+    ax1 = plt.subplot(3, 1, 1)
+    im = ax1.imshow(
+        V.T,
+        aspect="auto",
+        origin="lower",
+        cmap="RdBu_r",
+        vmin=-80,
+        vmax=40,
+    )
+    ax1.set_xlabel("Time (ms)")
+    ax1.set_ylabel("Position (cm)")
+    ax1.set_ylim(0, length)
+    ax1.set_title("Action Potential Propagation Along Cable")
+    plt.colorbar(im, ax=ax1, label="Membrane Potential (mV)")
 
-    gates = {"m": (m, "green"), "h": (h, "purple"), "n": (n, "red")}
-
-    for name, (data, color) in gates.items():
-        ax1_right.plot(t, data, color=color, alpha=0.3, label=f"{name} gate")
-
-    ax1_right.legend()
-
-    ax1.set_xlabel("Time")
-    ax1.set_ylabel("Membrane Potential (mV)")
-    ax1.set_title("Action Potential Propagation")
-    ax1.grid(True)
-
-    ax2.plot(t, I_inj, color="Red")
-    ax2.set_xlabel("Time")
-    ax2.set_ylabel("Injected Current")
-    ax2.set_title("Current Injection")
+    # 2. Voltage at different positions
+    ax2 = plt.subplot(3, 1, 2)
+    positions_to_plot = [
+        0,
+        n_spatial // 4,
+        n_spatial // 2,
+        3 * n_spatial // 4,
+        n_spatial - 1,
+    ]
+    for pos in positions_to_plot:
+        ax2.plot(t, V[:, pos], label=f"x = {x[pos]:.2f} cm")
+    ax2.set_xlabel("Time (ms)")
+    ax2.set_ylabel("Membrane Potential (mV)")
+    ax2.set_title("Voltage at Different Positions")
+    ax2.legend()
     ax2.grid(True)
 
+    ax3 = plt.subplot(3, 1, 3)
+    times_to_plot = [10, 20, 25, 30, 35]
+    for time_ms in times_to_plot:
+        idx = int(time_ms / dt)
+        if idx < n_time:
+            ax3.plot(x, V[idx, :], label=f"t = {time_ms} ms")
+    ax3.set_xlabel("Position (cm)")
+    ax3.set_ylabel("Membrane Potential (mV)")
+    ax3.set_title("Spatial Profile at Different Times")
+    ax3.legend()
+    ax3.grid(True)
+
     plt.tight_layout()
-    plt.savefig("hh_model.png")
-    # plt.show()
+    plt.savefig("hh_cable_model.png", dpi=150)
+    plt.show()
 
 
 if __name__ == "__main__":
