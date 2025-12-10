@@ -5,14 +5,14 @@ import numpy as np
 L = 1000.0
 T = 40.0
 dx = 10.0
-dt = 0.01
+dt = 0.001
 
 n_x = int(L / dx)
 n_t = int(T / dt)
 
-# cable parameters
-lam = 200.0  # space constant
-tau = 1.0  # time constant
+# Cable parameters
+lam = 200.0
+tau = 1.0
 c_m = 1.0
 
 # hodgkin-huxley parameters
@@ -27,17 +27,38 @@ E_L = -54.387
 # diffusion coefficient
 alpha = (lam**2 * dt) / (tau * dx**2)
 
+print(f"Simulation Alpha: {alpha:.4f}")
+if alpha > 0.5:
+    print("WARNING: Alpha > 0.5.")
 
-def alpha_n(V):
-    return -0.01 * (V + 55) / (np.exp((V + 55) / -10) - 1)
+
+# 2. HELPER FUNCTIONS (Safe against division by zero)
+def safe_div(num, denom):
+    # If denominator is close to zero, return limit (L'Hopital's rule approximation)
+    # This prevents the RuntimeWarning for division by zero
+    mask = np.abs(denom) < 1e-6
+    # If denom is 0, the function limit usually approximates the numerator coefficient
+    # For HH specific functions: x / (exp(x) - 1) -> 1 as x -> 0
+    # We essentially skip the exact singularity point
+    out = np.divide(num, denom, out=np.zeros_like(num), where=~mask)
+    # A simple fallback for the singularity is often sufficient,
+    # but for pure HH, usually we just shift V slightly if exact match,
+    # or implement specific limits.
+    # Here, a tiny epsilon shift avoids the exact zero without complex logic:
+    return num / (denom + 1e-12)
+
+
+# Standard HH forms often rewritten to handle singularities better:
+def alpha_n_safe(V):
+    return 0.01 * (V + 55) / (1 - np.exp(-(V + 55) / 10) + 1e-9)
 
 
 def beta_n(V):
     return 0.125 * np.exp((V + 65) / -80)
 
 
-def alpha_m(V):
-    return -0.1 * (V + 40) / (np.exp((V + 40) / -10) - 1)
+def alpha_m_safe(V):
+    return 0.1 * (V + 40) / (1 - np.exp(-(V + 40) / 10) + 1e-9)
 
 
 def beta_m(V):
@@ -49,7 +70,7 @@ def alpha_h(V):
 
 
 def beta_h(V):
-    return 1 / (1 + np.exp((V + 35) / -10))
+    return 1.0 / (1.0 + np.exp((V + 35) / -10))
 
 
 def main():
@@ -60,9 +81,10 @@ def main():
 
     # initial conditions
     v_rest = -65.0
-    v_matrix[:, 0] = v_rest
+    v_matrix[0, :] = v_rest
 
-    m_matrix[0, :] = alpha_m(v_rest) / (alpha_m(v_rest) + beta_m(v_rest))
+    # Initialize gates at steady state
+    m_matrix[0, :] = alpha_m_safe(v_rest) / (alpha_m_safe(v_rest) + beta_m(v_rest))
     h_matrix[0, :] = alpha_h(v_rest) / (alpha_h(v_rest) + beta_h(v_rest))
     n_matrix[0, :] = alpha_n(v_rest) / (alpha_n(v_rest) + beta_n(v_rest))
 
@@ -133,10 +155,6 @@ def main():
         vmax=40,
         origin="lower",
     )
-    ax1.set_ylabel("Position")
-    ax1.set_xlabel("Time")
-
-    ax1.set_title("Action potential propagation")
 
     plt.show()
 
