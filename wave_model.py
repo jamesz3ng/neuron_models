@@ -1,18 +1,45 @@
 import numpy as np
 
 
+def _default_params():
+    return {
+        "L": 1.0,
+        "c": 10.0,
+        "T": 0.5,
+        "nx": 100,
+        "dt": None,  # if None, uses dx / c
+        "spike_center": 0.2,
+        "spike_width": 100.0,
+        "store_history": True,
+        "history_stride": 6,
+    }
+
+
 def simulate_wave_model(
     *,
-    L: float = 1.0,
-    c: float = 10.0,
-    T: float = 0.5,
-    nx: int = 100,
+    L: float | None = None,
+    c: float | None = None,
+    T: float | None = None,
+    nx: int | None = None,
     dt: float | None = None,
-    spike_center: float = 0.2,
-    spike_width: float = 100.0,
-    store_history: bool = True,
-    history_stride: int = 6,
+    spike_center: float | None = None,
+    spike_width: float | None = None,
+    store_history: bool | None = None,
+    history_stride: int | None = None,
 ):
+    defaults = _default_params()
+    L = defaults["L"] if L is None else L
+    c = defaults["c"] if c is None else c
+    T = defaults["T"] if T is None else T
+    nx = defaults["nx"] if nx is None else nx
+    dt = defaults["dt"] if dt is None else dt
+    spike_center = defaults["spike_center"] if spike_center is None else spike_center
+    spike_width = defaults["spike_width"] if spike_width is None else spike_width
+    store_history = defaults["store_history"] if store_history is None else store_history
+    history_stride = (
+        defaults["history_stride"] if history_stride is None else history_stride
+    )
+
     dx = L / (nx - 1)
     dt = dx / c if dt is None else dt
     nt = int(T / dt)

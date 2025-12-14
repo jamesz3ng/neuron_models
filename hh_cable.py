@@ -1,5 +1,29 @@
 import numpy as np
 
+def _default_params():
+    return {
+        "L": 5000.0,  # um
+        "T": 40.0,
+        "dx": 10.0,
+        "dt": 0.001,
+        "lam": 200.0,
+        "tau": 1.0,
+        "c_m": 1.0,
+        "g_Na": 120.0,  # uS/cm^2
+        "g_K": 36.0,
+        "g_L": 0.3,
+        "E_Na": 50.0,
+        "E_K": -77.0,
+        "E_L": -54.387,
+        "v_rest": -65.0,
+        "stim_duration": 5.0,
+        "stim_amplitude": 1000.0,
+        "stim_index": 1,
+        "store_history": True,
+        "history_stride": 1,
+    }
+
+
 def alpha_n_safe(V):
     return 0.01 * (V + 55) / (1 - np.exp(-(V + 55) / 10) + 1e-9)
 
@@ -26,26 +50,51 @@ def beta_h(V):
 
 def simulate_hh_cable(
     *,
-    L: float = 5000.0,
-    T: float = 40.0,
-    dx: float = 10.0,
-    dt: float = 0.001,
-    lam: float = 200.0,
-    tau: float = 1.0,
-    c_m: float = 1.0,
-    g_Na: float = 120.0,
-    g_K: float = 36.0,
-    g_L: float = 0.3,
-    E_Na: float = 50.0,
-    E_K: float = -77.0,
-    E_L: float = -54.387,
-    v_rest: float = -65.0,
-    stim_duration: float = 5.0,
-    stim_amplitude: float = 1000.0,
-    stim_index: int = 1,
-    store_history: bool = True,
-    history_stride: int = 1,
+    L: float | None = None,
+    T: float | None = None,
+    dx: float | None = None,
+    dt: float | None = None,
+    lam: float | None = None,
+    tau: float | None = None,
+    c_m: float | None = None,
+    g_Na: float | None = None,
+    g_K: float | None = None,
+    g_L: float | None = None,
+    E_Na: float | None = None,
+    E_K: float | None = None,
+    E_L: float | None = None,
+    v_rest: float | None = None,
+    stim_duration: float | None = None,
+    stim_amplitude: float | None = None,
+    stim_index: int | None = None,
+    store_history: bool | None = None,
+    history_stride: int | None = None,
 ):
+    defaults = _default_params()
+    L = defaults["L"] if L is None else L
+    T = defaults["T"] if T is None else T
+    dx = defaults["dx"] if dx is None else dx
+    dt = defaults["dt"] if dt is None else dt
+    lam = defaults["lam"] if lam is None else lam
+    tau = defaults["tau"] if tau is None else tau
+    c_m = defaults["c_m"] if c_m is None else c_m
+    g_Na = defaults["g_Na"] if g_Na is None else g_Na
+    g_K = defaults["g_K"] if g_K is None else g_K
+    g_L = defaults["g_L"] if g_L is None else g_L
+    E_Na = defaults["E_Na"] if E_Na is None else E_Na
+    E_K = defaults["E_K"] if E_K is None else E_K
+    E_L = defaults["E_L"] if E_L is None else E_L
+    v_rest = defaults["v_rest"] if v_rest is None else v_rest
+    stim_duration = defaults["stim_duration"] if stim_duration is None else stim_duration
+    stim_amplitude = (
+        defaults["stim_amplitude"] if stim_amplitude is None else stim_amplitude
+    )
+    stim_index = defaults["stim_index"] if stim_index is None else stim_index
+    store_history = defaults["store_history"] if store_history is None else store_history
+    history_stride = (
+        defaults["history_stride"] if history_stride is None else history_stride
+    )
+
     n_x = int(L / dx)
     n_t = int(T / dt)
 
