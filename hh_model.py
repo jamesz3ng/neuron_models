@@ -1,34 +1,24 @@
-import matplotlib.pyplot as plt
 import numpy as np
 
 # https://goldmanlab.faculty.ucdavis.edu/wp-content/uploads/sites/263/2016/07/HodgkinHuxley.pdf
 # values taken from above converted to SI units
 
-# constants
-C_m = 1.0  # nF/mm^2
-g_Na = 120.0  # uS/cm^2
-g_K = 36.0  # uS/cm^2
-g_L = 0.3  # uS/cm^2
-
-# reverse potential (mV)
-E_Na = 50.0
-E_K = -77.0
-E_L = -54.387
-
-# cabel geometry
-
-length = 2.0  # cm
-diameter = 0.05  #
-radius = diameter / 2
-r_a = 35.4  # axial resistivity
-
-# discretization
-n_spatial = 100
-dx = length / n_spatial
-dt = 0.01
-T = 50.0
-
-diffusion_coeff = radius / (2 * r_a * dx**2 + C_m)
+def _default_params():
+    return {
+        "C_m": 1.0,  # nF/mm^2
+        "g_Na": 120.0,  # uS/cm^2
+        "g_K": 36.0,
+        "g_L": 0.3,
+        "E_Na": 50.0,  # mV
+        "E_K": -77.0,
+        "E_L": -54.387,
+        "length": 2.0,  # cm
+        "diameter": 0.05,
+        "r_a": 35.4,  # axial resistivity
+        "n_spatial": 100,
+        "dt": 0.01,
+        "T": 50.0,
+    }
 
 # rate functions
 # k activation
@@ -64,58 +54,156 @@ def create_square_pulse(t, start, end, amplitude, dt):
     return pulse
 
 
-def main():
+def simulate_hh_model(
+    *,
+    C_m: float | None = None,
+    g_Na: float | None = None,
+    g_K: float | None = None,
+    g_L: float | None = None,
+    E_Na: float | None = None,
+    E_K: float | None = None,
+    E_L: float | None = None,
+    length: float | None = None,
+    diameter: float | None = None,
+    r_a: float | None = None,
+    n_spatial: int | None = None,
+    dt: float | None = None,
+    T: float | None = None,
+    v_rest: float = -65.0,
+    stim_start: float = 20.0,
+    stim_end: float = 30.0,
+    stim_amplitude: float = 20.0,
+    stim_index: int = 0,
+    store_history: bool = True,
+    history_stride: int = 1,
+):
+    defaults = _default_params()
+    C_m = defaults["C_m"] if C_m is None else C_m
+    g_Na = defaults["g_Na"] if g_Na is None else g_Na
+    g_K = defaults["g_K"] if g_K is None else g_K
+    g_L = defaults["g_L"] if g_L is None else g_L
+    E_Na = defaults["E_Na"] if E_Na is None else E_Na
+    E_K = defaults["E_K"] if E_K is None else E_K
+    E_L = defaults["E_L"] if E_L is None else E_L
+    length = defaults["length"] if length is None else length
+    diameter = defaults["diameter"] if diameter is None else diameter
+    r_a = defaults["r_a"] if r_a is None else r_a
+    n_spatial = defaults["n_spatial"] if n_spatial is None else n_spatial
+    dt = defaults["dt"] if dt is None else dt
+    T = defaults["T"] if T is None else T
+
+    radius = diameter / 2
+    dx = length / n_spatial
+    diffusion_coeff = radius / (2 * r_a * dx**2 + C_m)
+
     n_time = int(T / dt)
-    t = np.arange(0, T, dt)
-    x = np.linspace(0, length, n_spatial)
 
-    V = np.zeros((n_time, n_spatial))
-    m = np.zeros((n_time, n_spatial))
-    h = np.zeros((n_time, n_spatial))
-    n = np.zeros((n_time, n_spatial))
+    stim_start_idx = int(stim_start / dt)
+    stim_end_idx = int(stim_end / dt)
 
-    # set initial resting positions
-    V[0, :] = -65.0
-    m[0, :] = 0.0529
-    h[0, :] = 0.5961
-    n[0, :] = 0.3177
+    if store_history:
+        t = np.arange(n_time) * dt
+        x = np.linspace(0, length, n_spatial)
 
-    # I_inj = create_square_pulse(t, 20, 60, 20, dt)
-    I_inj = np.zeros((n_time, n_spatial))
-    start_idx = int(20 / dt)
-    end_idx = int(30 / dt)
-    I_inj[start_idx:end_idx, 0] = 20.0
+        V = np.zeros((n_time, n_spatial))
+        m = np.zeros((n_time, n_spatial))
+        h = np.zeros((n_time, n_spatial))
+        n_gate = np.zeros((n_time, n_spatial))
 
-    # Using the Euler forward method
-    for i in range(1, len(t)):
-        V_old = V[i - 1, :]
-        m_old = m[i - 1, :]
-        h_old = h[i - 1, :]
-        n_old = n[i - 1, :]
+        V[0, :] = v_rest
+        m[0, :] = 0.0529
+        h[0, :] = 0.5961
+        n_gate[0, :] = 0.3177
 
-        I_Na = g_Na * (m_old**3) * h_old * (V_old - E_Na)
-        I_K = g_K * (n_old**4) * (V_old - E_K)
-        I_L = g_L * (V_old - E_L)
+        for i in range(1, n_time):
+            V_old = V[i - 1, :]
+            m_old = m[i - 1, :]
+            h_old = h[i - 1, :]
+            n_old = n_gate[i - 1, :]
 
-        dm = alpha_m(V_old) * (1 - m_old) - beta_m(V_old) * m_old
-        dh = alpha_h(V_old) * (1 - h_old) - beta_h(V_old) * h_old
-        dn = alpha_n(V_old) * (1 - n_old) - beta_n(V_old) * n_old
+            I_Na = g_Na * (m_old**3) * h_old * (V_old - E_Na)
+            I_K = g_K * (n_old**4) * (V_old - E_K)
+            I_L = g_L * (V_old - E_L)
 
-        m[i, :] = m_old + dm * dt
-        h[i, :] = h_old + dh * dt
-        n[i, :] = n_old + dn * dt
+            dm = alpha_m(V_old) * (1 - m_old) - beta_m(V_old) * m_old
+            dh = alpha_h(V_old) * (1 - h_old) - beta_h(V_old) * h_old
+            dn = alpha_n(V_old) * (1 - n_old) - beta_n(V_old) * n_old
 
-        # cable equation: spatial diffusion term
+            m[i, :] = m_old + dm * dt
+            h[i, :] = h_old + dh * dt
+            n_gate[i, :] = n_old + dn * dt
+
+            d2V = np.zeros(n_spatial)
+            d2V[1:-1] = V_old[2:] - 2 * V_old[1:-1] + V_old[:-2]
+            d2V[0] = V_old[1] - V_old[0]
+            d2V[-1] = V_old[-2] - V_old[-1]
+
+            I_inj = np.zeros(n_spatial)
+            if stim_start_idx <= i - 1 < stim_end_idx and 0 <= stim_index < n_spatial:
+                I_inj[stim_index] = stim_amplitude
+
+            dV = (diffusion_coeff * d2V + I_inj - I_Na - I_K - I_L) / C_m
+            V[i, :] = V_old + dV * dt
+
+        return {
+            "t": t[::history_stride],
+            "x": x,
+            "V": V[::history_stride, :],
+            "length": float(length),
+            "dt": float(dt),
+            "T": float(T),
+            "n_spatial": int(n_spatial),
+        }
+
+    V = np.full(n_spatial, v_rest, dtype=float)
+    m = np.full(n_spatial, 0.0529, dtype=float)
+    h = np.full(n_spatial, 0.5961, dtype=float)
+    n_gate = np.full(n_spatial, 0.3177, dtype=float)
+
+    for i in range(1, n_time):
+        I_Na = g_Na * (m**3) * h * (V - E_Na)
+        I_K = g_K * (n_gate**4) * (V - E_K)
+        I_L = g_L * (V - E_L)
+
+        dm = alpha_m(V) * (1 - m) - beta_m(V) * m
+        dh = alpha_h(V) * (1 - h) - beta_h(V) * h
+        dn = alpha_n(V) * (1 - n_gate) - beta_n(V) * n_gate
+
+        m = m + dm * dt
+        h = h + dh * dt
+        n_gate = n_gate + dn * dt
+
         d2V = np.zeros(n_spatial)
-        d2V[1:-1] = V_old[2:] - 2 * V_old[1:-1] + V_old[:-2]
-        d2V[0] = V_old[1] - V_old[0]
-        d2V[-1] = V_old[-2] - V_old[-1]
+        d2V[1:-1] = V[2:] - 2 * V[1:-1] + V[:-2]
+        d2V[0] = V[1] - V[0]
+        d2V[-1] = V[-2] - V[-1]
 
-        dV = (diffusion_coeff * d2V + I_inj[i - 1, :] - I_Na - I_K - I_L) / C_m
+        I_inj = np.zeros(n_spatial)
+        if stim_start_idx <= i - 1 < stim_end_idx and 0 <= stim_index < n_spatial:
+            I_inj[stim_index] = stim_amplitude
 
-        V[i, :] = V_old + dV * dt
+        dV = (diffusion_coeff * d2V + I_inj - I_Na - I_K - I_L) / C_m
+        V = V + dV * dt
 
-    # 1. Space-time plot (heatmap)
+    return {
+        "V_final": V,
+        "length": float(length),
+        "dt": float(dt),
+        "T": float(T),
+        "n_spatial": int(n_spatial),
+    }
+
+
+def main():
+    import matplotlib.pyplot as plt
+
+    result = simulate_hh_model(store_history=True, history_stride=1)
+    t = result["t"]
+    x = result["x"]
+    V = result["V"]
+    length = result["length"]
+    dt = result["dt"]
+
     ax1 = plt.subplot(3, 1, 1)
     im = ax1.imshow(
         V.T,
@@ -131,8 +219,8 @@ def main():
     ax1.set_title("Action Potential Propagation Along Cable")
     plt.colorbar(im, ax=ax1, label="Membrane Potential (mV)")
 
-    # 2. Voltage at different positions
     ax2 = plt.subplot(3, 1, 2)
+    n_spatial = V.shape[1]
     positions_to_plot = [
         0,
         n_spatial // 4,
@@ -152,7 +240,7 @@ def main():
     times_to_plot = [10, 20, 25, 30, 35]
     for time_ms in times_to_plot:
         idx = int(time_ms / dt)
-        if idx < n_time:
+        if idx < len(t):
             ax3.plot(x, V[idx, :], label=f"t = {time_ms} ms")
     ax3.set_xlabel("Position (cm)")
     ax3.set_ylabel("Membrane Potential (mV)")
