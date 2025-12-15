@@ -2,12 +2,17 @@ import numpy as np
 
 
 def _default_params():
+    """
+    Unit conventions:
+    - Time is in seconds (s).
+    - Length is in arbitrary units consistent with `c` (typically meters if `c` is m/s).
+    """
     return {
         "L": 1.0,
         "c": 10.0,
-        "T": 0.5,
+        "T_s": 0.5,
         "nx": 100,
-        "dt": None,  # if None, uses dx / c
+        "dt_s": None,  # if None, uses dx / c
         "spike_center": 0.2,
         "spike_width": 100.0,
         "store_history": True,
@@ -19,9 +24,9 @@ def simulate_wave_model(
     *,
     L: float | None = None,
     c: float | None = None,
-    T: float | None = None,
+    T_s: float | None = None,
     nx: int | None = None,
-    dt: float | None = None,
+    dt_s: float | None = None,
     spike_center: float | None = None,
     spike_width: float | None = None,
     store_history: bool | None = None,
@@ -30,9 +35,9 @@ def simulate_wave_model(
     defaults = _default_params()
     L = defaults["L"] if L is None else L
     c = defaults["c"] if c is None else c
-    T = defaults["T"] if T is None else T
+    T_s = defaults["T_s"] if T_s is None else T_s
     nx = defaults["nx"] if nx is None else nx
-    dt = defaults["dt"] if dt is None else dt
+    dt_s = defaults["dt_s"] if dt_s is None else dt_s
     spike_center = defaults["spike_center"] if spike_center is None else spike_center
     spike_width = defaults["spike_width"] if spike_width is None else spike_width
     store_history = defaults["store_history"] if store_history is None else store_history
@@ -41,10 +46,10 @@ def simulate_wave_model(
     )
 
     dx = L / (nx - 1)
-    dt = dx / c if dt is None else dt
-    nt = int(T / dt)
+    dt_s = dx / c if dt_s is None else dt_s
+    nt = int(T_s / dt_s)
 
-    alpha = (c * dt / dx) ** 2
+    alpha = (c * dt_s / dx) ** 2
 
     x = np.linspace(0, L, nx)
     v_prev = np.zeros(nx)
@@ -52,7 +57,7 @@ def simulate_wave_model(
     v_next = np.zeros(nx)
 
     v_curr = np.exp(-spike_width * (x - spike_center) ** 2)
-    v_prev = np.exp(-spike_width * (x - (spike_center + c * dt)) ** 2)
+    v_prev = np.exp(-spike_width * (x - (spike_center + c * dt_s)) ** 2)
 
     history: list[np.ndarray] = []
     times: list[float] = []
@@ -72,15 +77,16 @@ def simulate_wave_model(
 
         if store_history and (n % history_stride == 0):
             history.append(v_curr.copy())
-            times.append(n * dt)
+            times.append(n * dt_s)
 
     result = {
         "x": x,
         "alpha": float(alpha),
-        "dt": float(dt),
-        "T": float(T),
+        "dt_s": float(dt_s),
+        "T_s": float(T_s),
         "L": float(L),
         "nx": int(nx),
+        "n_t": int(nt),
     }
     if store_history:
         result["history"] = history

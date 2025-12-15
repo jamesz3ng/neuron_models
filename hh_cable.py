@@ -1,13 +1,22 @@
 import numpy as np
 
 def _default_params():
+    """
+    Unit conventions for the public API:
+    - Time is in seconds (`T_s`, `dt_s`, `stim_duration_s`).
+    - Voltage is in millivolts (mV).
+    - Length is in micrometers (um).
+
+    Internally, some stability/scaling terms use millisecond time units; `dt_s` is
+    converted to `dt_ms` for those calculations.
+    """
     return {
         "L": 5000.0,  # um
-        "T": 40.0,
+        "T_s": 4e-2,  # 40 ms
         "dx": 10.0,
-        "dt": 0.001,
+        "dt_s": 1e-6,  # 0.001 ms
         "lam": 200.0,
-        "tau": 1.0,
+        "tau_ms": 1.0,
         "c_m": 1.0,
         "g_Na": 120.0,  # uS/cm^2
         "g_K": 36.0,
@@ -16,7 +25,7 @@ def _default_params():
         "E_K": -77.0,
         "E_L": -54.387,
         "v_rest": -65.0,
-        "stim_duration": 5.0,
+        "stim_duration_s": 5e-3,  # 5 ms
         "stim_amplitude": 1000.0,
         "stim_index": 1,
         "store_history": True,
@@ -51,11 +60,11 @@ def beta_h(V):
 def simulate_hh_cable(
     *,
     L: float | None = None,
-    T: float | None = None,
+    T_s: float | None = None,
     dx: float | None = None,
-    dt: float | None = None,
+    dt_s: float | None = None,
     lam: float | None = None,
-    tau: float | None = None,
+    tau_ms: float | None = None,
     c_m: float | None = None,
     g_Na: float | None = None,
     g_K: float | None = None,
@@ -64,7 +73,7 @@ def simulate_hh_cable(
     E_K: float | None = None,
     E_L: float | None = None,
     v_rest: float | None = None,
-    stim_duration: float | None = None,
+    stim_duration_s: float | None = None,
     stim_amplitude: float | None = None,
     stim_index: int | None = None,
     store_history: bool | None = None,
@@ -72,11 +81,11 @@ def simulate_hh_cable(
 ):
     defaults = _default_params()
     L = defaults["L"] if L is None else L
-    T = defaults["T"] if T is None else T
+    T_s = defaults["T_s"] if T_s is None else T_s
     dx = defaults["dx"] if dx is None else dx
-    dt = defaults["dt"] if dt is None else dt
+    dt_s = defaults["dt_s"] if dt_s is None else dt_s
     lam = defaults["lam"] if lam is None else lam
-    tau = defaults["tau"] if tau is None else tau
+    tau_ms = defaults["tau_ms"] if tau_ms is None else tau_ms
     c_m = defaults["c_m"] if c_m is None else c_m
     g_Na = defaults["g_Na"] if g_Na is None else g_Na
     g_K = defaults["g_K"] if g_K is None else g_K
@@ -85,7 +94,9 @@ def simulate_hh_cable(
     E_K = defaults["E_K"] if E_K is None else E_K
     E_L = defaults["E_L"] if E_L is None else E_L
     v_rest = defaults["v_rest"] if v_rest is None else v_rest
-    stim_duration = defaults["stim_duration"] if stim_duration is None else stim_duration
+    stim_duration_s = (
+        defaults["stim_duration_s"] if stim_duration_s is None else stim_duration_s
+    )
     stim_amplitude = (
         defaults["stim_amplitude"] if stim_amplitude is None else stim_amplitude
     )
@@ -96,10 +107,11 @@ def simulate_hh_cable(
     )
 
     n_x = int(L / dx)
-    n_t = int(T / dt)
+    n_t = int(T_s / dt_s)
+    dt_ms = dt_s * 1e3
 
     # diffusion coefficient
-    alpha = (lam**2 * dt) / (tau * dx**2)
+    alpha = (lam**2 * dt_ms) / (tau_ms * dx**2)
 
     if store_history:
         v_matrix = np.zeros((n_t, n_x))
@@ -112,7 +124,7 @@ def simulate_hh_cable(
         h_matrix[0, :] = alpha_h(v_rest) / (alpha_h(v_rest) + beta_h(v_rest))
         n_matrix[0, :] = alpha_n_safe(v_rest) / (alpha_n_safe(v_rest) + beta_n(v_rest))
 
-        input_steps = int(stim_duration / dt)
+        input_steps = int(stim_duration_s / dt_s)
         for t in range(n_t - 1):
             v = v_matrix[t, :]
             m = m_matrix[t, :]
@@ -136,8 +148,8 @@ def simulate_hh_cable(
             v_matrix[t + 1, :] = v
             dv_dt_inner = (
                 diffusion_term
-                - (i_ion[1:-1] * dt) / c_m
-                + (i_applied[1:-1] * dt) / c_m
+                - (i_ion[1:-1] * dt_ms) / c_m
+                + (i_applied[1:-1] * dt_ms) / c_m
             )
             v_matrix[t + 1, 1:-1] = v_inner + dv_dt_inner
 
@@ -151,18 +163,18 @@ def simulate_hh_cable(
             an = alpha_n_safe(v)
             bn = beta_n(v)
 
-            m_matrix[t + 1, :] = m + dt * (am * (1 - m) - bm * m)
-            h_matrix[t + 1, :] = h + dt * (ah * (1 - h) - bh * h)
-            n_matrix[t + 1, :] = n + dt * (an * (1 - n) - bn * n)
+            m_matrix[t + 1, :] = m + dt_ms * (am * (1 - m) - bm * m)
+            h_matrix[t + 1, :] = h + dt_ms * (ah * (1 - h) - bh * h)
+            n_matrix[t + 1, :] = n + dt_ms * (an * (1 - n) - bn * n)
 
         return {
             "alpha": float(alpha),
             "n_x": int(n_x),
             "n_t": int(n_t),
             "L": float(L),
-            "T": float(T),
+            "T_s": float(T_s),
             "dx": float(dx),
-            "dt": float(dt),
+            "dt_s": float(dt_s),
             "v_matrix": v_matrix[::history_stride, :],
         }
 
@@ -171,7 +183,7 @@ def simulate_hh_cable(
     h = np.full(n_x, alpha_h(v_rest) / (alpha_h(v_rest) + beta_h(v_rest)))
     n = np.full(n_x, alpha_n_safe(v_rest) / (alpha_n_safe(v_rest) + beta_n(v_rest)))
 
-    input_steps = int(stim_duration / dt)
+    input_steps = int(stim_duration_s / dt_s)
     for t in range(n_t - 1):
         v_inner = v[1:-1]
         diffusion_term = alpha * (v[:-2] - 2 * v_inner + v[2:])
@@ -189,7 +201,9 @@ def simulate_hh_cable(
             i_applied_inner = 0.0
 
         dv_dt_inner = (
-            diffusion_term - (i_ion[1:-1] * dt) / c_m + (i_applied_inner * dt) / c_m
+            diffusion_term
+            - (i_ion[1:-1] * dt_ms) / c_m
+            + (i_applied_inner * dt_ms) / c_m
         )
         v_next = v.copy()
         v_next[1:-1] = v_inner + dv_dt_inner
@@ -203,9 +217,9 @@ def simulate_hh_cable(
         an = alpha_n_safe(v)
         bn = beta_n(v)
 
-        m = m + dt * (am * (1 - m) - bm * m)
-        h = h + dt * (ah * (1 - h) - bh * h)
-        n = n + dt * (an * (1 - n) - bn * n)
+        m = m + dt_ms * (am * (1 - m) - bm * m)
+        h = h + dt_ms * (ah * (1 - h) - bh * h)
+        n = n + dt_ms * (an * (1 - n) - bn * n)
         v = v_next
 
     return {
@@ -213,9 +227,9 @@ def simulate_hh_cable(
         "n_x": int(n_x),
         "n_t": int(n_t),
         "L": float(L),
-        "T": float(T),
+        "T_s": float(T_s),
         "dx": float(dx),
-        "dt": float(dt),
+        "dt_s": float(dt_s),
         "v_final": v,
     }
 
@@ -226,7 +240,7 @@ def main():
     result = simulate_hh_cable(store_history=True, history_stride=1)
     v_matrix = result["v_matrix"]
     alpha = result["alpha"]
-    T = result["T"]
+    T_s = result["T_s"]
     L = result["L"]
 
     if alpha > 0.5:
@@ -244,12 +258,12 @@ def main():
         vmin=-80,
         vmax=40,
         origin="lower",
-        extent=[0, T, 0, L],
+        extent=[0, T_s, 0, L],
     )
 
     plt.colorbar(img, label="Voltage (mV)")
     ax1.set_ylabel("Position (um)")
-    ax1.set_xlabel("Time (ms)")
+    ax1.set_xlabel("Time (s)")
     ax1.set_title(f"AP Propagation (alpha={alpha:.2f})")
     plt.tight_layout()
     plt.show()

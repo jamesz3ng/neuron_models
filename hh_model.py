@@ -4,6 +4,15 @@ import numpy as np
 # values taken from above converted to SI units
 
 def _default_params():
+    """
+    Unit conventions for the public API:
+    - Time is in seconds (`T_s`, `dt_s`, `stim_*_s`).
+    - Voltage is in millivolts (mV).
+    - Length is in centimeters (cm).
+
+    Internally, the classic Hodgkin-Huxley rate equations are advanced in milliseconds by
+    converting `dt_s` -> `dt_ms` (and similarly for stimulus times).
+    """
     return {
         "C_m": 1.0,  # nF/mm^2
         "g_Na": 120.0,  # uS/cm^2
@@ -16,8 +25,10 @@ def _default_params():
         "diameter": 0.05,
         "r_a": 35.4,  # axial resistivity
         "n_spatial": 100,
-        "dt": 0.01,
-        "T": 50.0,
+        "dt_s": 1e-5,  # 0.01 ms
+        "T_s": 5e-2,  # 50 ms
+        "stim_start_s": 2e-2,  # 20 ms
+        "stim_end_s": 3e-2,  # 30 ms
     }
 
 # rate functions
@@ -67,11 +78,11 @@ def simulate_hh_model(
     diameter: float | None = None,
     r_a: float | None = None,
     n_spatial: int | None = None,
-    dt: float | None = None,
-    T: float | None = None,
+    dt_s: float | None = None,
+    T_s: float | None = None,
     v_rest: float = -65.0,
-    stim_start: float = 20.0,
-    stim_end: float = 30.0,
+    stim_start_s: float | None = None,
+    stim_end_s: float | None = None,
     stim_amplitude: float = 20.0,
     stim_index: int = 0,
     store_history: bool = True,
@@ -89,20 +100,25 @@ def simulate_hh_model(
     diameter = defaults["diameter"] if diameter is None else diameter
     r_a = defaults["r_a"] if r_a is None else r_a
     n_spatial = defaults["n_spatial"] if n_spatial is None else n_spatial
-    dt = defaults["dt"] if dt is None else dt
-    T = defaults["T"] if T is None else T
+    dt_s = defaults["dt_s"] if dt_s is None else dt_s
+    T_s = defaults["T_s"] if T_s is None else T_s
+    stim_start_s = defaults["stim_start_s"] if stim_start_s is None else stim_start_s
+    stim_end_s = defaults["stim_end_s"] if stim_end_s is None else stim_end_s
+
+    dt_ms = dt_s * 1e3
+    T_ms = T_s * 1e3
 
     radius = diameter / 2
     dx = length / n_spatial
     diffusion_coeff = radius / (2 * r_a * dx**2 + C_m)
 
-    n_time = int(T / dt)
+    n_time = int(T_s / dt_s)
 
-    stim_start_idx = int(stim_start / dt)
-    stim_end_idx = int(stim_end / dt)
+    stim_start_idx = int(stim_start_s / dt_s)
+    stim_end_idx = int(stim_end_s / dt_s)
 
     if store_history:
-        t = np.arange(n_time) * dt
+        t_s = np.arange(n_time) * dt_s
         x = np.linspace(0, length, n_spatial)
 
         V = np.zeros((n_time, n_spatial))
@@ -129,9 +145,9 @@ def simulate_hh_model(
             dh = alpha_h(V_old) * (1 - h_old) - beta_h(V_old) * h_old
             dn = alpha_n(V_old) * (1 - n_old) - beta_n(V_old) * n_old
 
-            m[i, :] = m_old + dm * dt
-            h[i, :] = h_old + dh * dt
-            n_gate[i, :] = n_old + dn * dt
+            m[i, :] = m_old + dm * dt_ms
+            h[i, :] = h_old + dh * dt_ms
+            n_gate[i, :] = n_old + dn * dt_ms
 
             d2V = np.zeros(n_spatial)
             d2V[1:-1] = V_old[2:] - 2 * V_old[1:-1] + V_old[:-2]
@@ -143,16 +159,17 @@ def simulate_hh_model(
                 I_inj[stim_index] = stim_amplitude
 
             dV = (diffusion_coeff * d2V + I_inj - I_Na - I_K - I_L) / C_m
-            V[i, :] = V_old + dV * dt
+            V[i, :] = V_old + dV * dt_ms
 
         return {
-            "t": t[::history_stride],
+            "t_s": t_s[::history_stride],
             "x": x,
             "V": V[::history_stride, :],
             "length": float(length),
-            "dt": float(dt),
-            "T": float(T),
+            "dt_s": float(dt_s),
+            "T_s": float(T_s),
             "n_spatial": int(n_spatial),
+            "n_t": int(n_time),
         }
 
     V = np.full(n_spatial, v_rest, dtype=float)
@@ -169,9 +186,9 @@ def simulate_hh_model(
         dh = alpha_h(V) * (1 - h) - beta_h(V) * h
         dn = alpha_n(V) * (1 - n_gate) - beta_n(V) * n_gate
 
-        m = m + dm * dt
-        h = h + dh * dt
-        n_gate = n_gate + dn * dt
+        m = m + dm * dt_ms
+        h = h + dh * dt_ms
+        n_gate = n_gate + dn * dt_ms
 
         d2V = np.zeros(n_spatial)
         d2V[1:-1] = V[2:] - 2 * V[1:-1] + V[:-2]
@@ -183,14 +200,15 @@ def simulate_hh_model(
             I_inj[stim_index] = stim_amplitude
 
         dV = (diffusion_coeff * d2V + I_inj - I_Na - I_K - I_L) / C_m
-        V = V + dV * dt
+        V = V + dV * dt_ms
 
     return {
         "V_final": V,
         "length": float(length),
-        "dt": float(dt),
-        "T": float(T),
+        "dt_s": float(dt_s),
+        "T_s": float(T_s),
         "n_spatial": int(n_spatial),
+        "n_t": int(n_time),
     }
 
 
@@ -198,11 +216,11 @@ def main():
     import matplotlib.pyplot as plt
 
     result = simulate_hh_model(store_history=True, history_stride=1)
-    t = result["t"]
+    t_s = result["t_s"]
     x = result["x"]
     V = result["V"]
     length = result["length"]
-    dt = result["dt"]
+    dt_s = result["dt_s"]
 
     ax1 = plt.subplot(3, 1, 1)
     im = ax1.imshow(
@@ -229,7 +247,7 @@ def main():
         n_spatial - 1,
     ]
     for pos in positions_to_plot:
-        ax2.plot(t, V[:, pos], label=f"x = {x[pos]:.2f} cm")
+        ax2.plot(t_s * 1e3, V[:, pos], label=f"x = {x[pos]:.2f} cm")
     ax2.set_xlabel("Time (ms)")
     ax2.set_ylabel("Membrane Potential (mV)")
     ax2.set_title("Voltage at Different Positions")
@@ -239,8 +257,8 @@ def main():
     ax3 = plt.subplot(3, 1, 3)
     times_to_plot = [10, 20, 25, 30, 35]
     for time_ms in times_to_plot:
-        idx = int(time_ms / dt)
-        if idx < len(t):
+        idx = int((time_ms * 1e-3) / dt_s)
+        if idx < len(t_s):
             ax3.plot(x, V[idx, :], label=f"t = {time_ms} ms")
     ax3.set_xlabel("Position (cm)")
     ax3.set_ylabel("Membrane Potential (mV)")
