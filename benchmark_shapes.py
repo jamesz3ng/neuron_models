@@ -323,7 +323,7 @@ def _plot_comparison(traces: dict, output_path: str):
             "color": "blue",
             "linewidth": 1.5,
             "linestyle": "-",
-            "label": "HH Model @ midpoint",
+            "label": "HH Model @ x=0 (no propagation)",
         },
         "fast_model": {
             "color": "red",
@@ -396,7 +396,8 @@ def _print_metrics_table(metrics: list[dict]):
 def main():
     print("Running AP Shape Comparison Benchmark")
     print(f"  Axon length: {L_UM} μm")
-    print(f"  Recording position: {RECORD_X_UM} μm (midpoint)")
+    print(f"  Recording position (hh_cable, fast_model): {RECORD_X_UM} μm (midpoint)")
+    print(f"  Recording position (hh_model): x=0 (stimulus site - no propagation)")
     print(f"  Fast model input from: {FAST_MODEL_INPUT_X_UM} μm (clean AP)")
     print(f"  Simulation duration: {T_MS} ms")
     print(f"  Conduction velocity (fast_model): {CONDUCTION_VELOCITY} μm/ms")
