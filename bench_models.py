@@ -23,7 +23,9 @@ def _summarize_times(times: list[float]) -> tuple[float, float]:
     return median, p90
 
 
-def _print_summary(*, model: str, times: list[float], work: int, sim_T_s: float, dt_s: float):
+def _print_summary(
+    *, model: str, times: list[float], work: int, sim_T_s: float, dt_s: float
+):
     median, p90 = _summarize_times(times)
     rtf = sim_T_s / median if median > 0 else float("inf")
     updates_per_sec = work / median if median > 0 else float("inf")
@@ -44,7 +46,9 @@ def main():
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--warmup", type=int, default=1)
 
-    parser.add_argument("--T", type=float, default=None, help="Simulated time (seconds).")
+    parser.add_argument(
+        "--T", type=float, default=None, help="Simulated time (seconds)."
+    )
     parser.add_argument("--dt", type=float, default=None, help="Time step (seconds).")
 
     parser.add_argument(
@@ -103,7 +107,10 @@ def main():
         else:
             alpha_target = 0.45
             dt_ms_max = (
-                alpha_target * hh_cable["tau_ms"] * (args.dx**2) / (hh_cable["lam"]**2)
+                alpha_target
+                * hh_cable["tau_ms"]
+                * (args.dx**2)
+                / (hh_cable["lam"] ** 2)
             )
             hh_cable_dt_s = dt_ms_max / 1e3
 
@@ -137,7 +144,9 @@ def main():
             dx_wave = wave["L"] / (args.N - 1)
             wave_dt_s = 0.9 * dx_wave / wave["c"]
 
-        meta = simulate_wave_model(nx=args.N, T_s=T_s, dt_s=wave_dt_s, store_history=False)
+        meta = simulate_wave_model(
+            nx=args.N, T_s=T_s, dt_s=wave_dt_s, store_history=False
+        )
         times = _time_call(
             lambda: simulate_wave_model(
                 nx=args.N, T_s=T_s, dt_s=wave_dt_s, store_history=False
@@ -189,7 +198,7 @@ def main():
         work = meta["n_spatial"] * meta["n_t"]
         sim_T_s = meta["T_s"]
         dt_s = meta["dt_s"]
-    else:
+    elif args.model == "wave_model":
         from wave_model import simulate_wave_model
 
         def run_once():
@@ -205,6 +214,8 @@ def main():
         work = meta["nx"] * meta["n_t"]
         sim_T_s = meta["T_s"]
         dt_s = meta["dt_s"]
+    else:
+        raise SystemExit(f"Unknown model: {args.model}")
 
     _print_summary(
         model=args.model,
