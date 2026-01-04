@@ -3,6 +3,7 @@ import numpy as np
 # https://goldmanlab.faculty.ucdavis.edu/wp-content/uploads/sites/263/2016/07/HodgkinHuxley.pdf
 # values taken from above converted to SI units
 
+
 def _default_params():
     """
     Unit conventions for the public API:
@@ -30,6 +31,7 @@ def _default_params():
         "stim_start_s": 2e-2,  # 20 ms
         "stim_end_s": 3e-2,  # 30 ms
     }
+
 
 # rate functions
 # k activation
@@ -117,6 +119,111 @@ def simulate_hh_model(
     stim_start_idx = int(stim_start_s / dt_s)
     stim_end_idx = int(stim_end_s / dt_s)
 
+    # Pre-compute stimulus current array (avoid allocation in loop)
+    I_stim = np.zeros(n_spatial, dtype=float)
+    if 0 <= stim_index < n_spatial:
+        I_stim[stim_index] = stim_amplitude
+
+    # Pre-compute constants for efficiency
+    inv_C_m = 1.0 / C_m
+    diff_inv_C_m = diffusion_coeff * inv_C_m
+
+    # =========================================================================
+    # OPTIMIZED SCALAR PATH for single-compartment (point neuron)
+    # Uses Python math.exp instead of numpy to avoid array overhead
+    # =========================================================================
+    if n_spatial == 1:
+        from math import exp as math_exp
+
+        t_s = np.arange(n_time) * dt_s
+        x = np.array([0.0])
+
+        # Use Python lists for history, convert to numpy at end
+        V_hist = [v_rest]
+        m_hist = [0.0529]
+        h_hist = [0.5961]
+        n_hist = [0.3177]
+
+        V_val = v_rest
+        m_val = 0.0529
+        h_val = 0.5961
+        n_val = 0.3177
+
+        # Determine if stimulus applies (stim_index must be 0 for n_spatial=1)
+        apply_stim = stim_index == 0
+
+        for i in range(1, n_time):
+            # Ionic currents (scalar)
+            I_Na = g_Na * (m_val**3) * h_val * (V_val - E_Na)
+            I_K = g_K * (n_val**4) * (V_val - E_K)
+            I_L = g_L * (V_val - E_L)
+
+            # Inlined rate functions using math.exp (scalar)
+            V_p55 = V_val + 55.0
+            V_p40 = V_val + 40.0
+            V_p65 = V_val + 65.0
+            V_p35 = V_val + 35.0
+
+            a_n = -0.01 * V_p55 / (math_exp(V_p55 / -10.0) - 1.0)
+            b_n = 0.125 * math_exp(V_p65 / -80.0)
+            a_m = -0.1 * V_p40 / (math_exp(V_p40 / -10.0) - 1.0)
+            b_m = 4.0 * math_exp(V_p65 / -18.0)
+            a_h = 0.07 * math_exp(V_p65 / -20.0)
+            b_h = 1.0 / (1.0 + math_exp(V_p35 / -10.0))
+
+            dm = a_m * (1.0 - m_val) - b_m * m_val
+            dh = a_h * (1.0 - h_val) - b_h * h_val
+            dn = a_n * (1.0 - n_val) - b_n * n_val
+
+            m_val += dm * dt_ms
+            h_val += dh * dt_ms
+            n_val += dn * dt_ms
+
+            # No diffusion for single compartment (d2V = 0)
+            # Apply stimulus during window
+            if apply_stim and stim_start_idx <= i - 1 < stim_end_idx:
+                dV = (stim_amplitude - I_Na - I_K - I_L) * inv_C_m
+            else:
+                dV = -(I_Na + I_K + I_L) * inv_C_m
+
+            V_val += dV * dt_ms
+
+            if store_history:
+                V_hist.append(V_val)
+                m_hist.append(m_val)
+                h_hist.append(h_val)
+                n_hist.append(n_val)
+
+        if store_history:
+            return {
+                "t_s": t_s[::history_stride],
+                "x": x,
+                "V": np.array(V_hist)[::history_stride, np.newaxis],
+                "length": float(length),
+                "dt_s": float(dt_s),
+                "T_s": float(T_s),
+                "n_spatial": 1,
+                "n_t": int(n_time),
+            }
+        else:
+            return {
+                "V_final": np.array([V_val]),
+                "length": float(length),
+                "dt_s": float(dt_s),
+                "T_s": float(T_s),
+                "n_spatial": 1,
+                "n_t": int(n_time),
+            }
+
+    # =========================================================================
+    # VECTORIZED PATH for multi-compartment cable
+    # =========================================================================
+
+    # Pre-compute stimulus current array (avoid allocation in loop)
+    I_stim = np.zeros(n_spatial, dtype=float)
+    if 0 <= stim_index < n_spatial:
+        I_stim[stim_index] = stim_amplitude
+
     if store_history:
         t_s = np.arange(n_time) * dt_s
         x = np.linspace(0, length, n_spatial)
@@ -131,6 +238,9 @@ def simulate_hh_model(
         h[0, :] = 0.5961
         n_gate[0, :] = 0.3177
 
+        # Pre-allocate d2V to avoid repeated allocation
+        d2V = np.zeros(n_spatial)
+
         for i in range(1, n_time):
             V_old = V[i - 1, :]
             m_old = m[i - 1, :]
@@ -141,24 +251,50 @@ def simulate_hh_model(
             I_K = g_K * (n_old**4) * (V_old - E_K)
             I_L = g_L * (V_old - E_L)
 
-            dm = alpha_m(V_old) * (1 - m_old) - beta_m(V_old) * m_old
-            dh = alpha_h(V_old) * (1 - h_old) - beta_h(V_old) * h_old
-            dn = alpha_n(V_old) * (1 - n_old) - beta_n(V_old) * n_old
+            # Inlined rate functions to eliminate function call overhead
+            # Pre-compute common subexpressions
+            V_p55 = V_old + 55.0
+            V_p40 = V_old + 40.0
+            V_p65 = V_old + 65.0
+            V_p35 = V_old + 35.0
+
+            # alpha_n = -0.01 * (V + 55) / (exp((V + 55) / -10) - 1)
+            # beta_n = 0.125 * exp((V + 65) / -80)
+            a_n = -0.01 * V_p55 / (np.exp(V_p55 / -10.0) - 1.0)
+            b_n = 0.125 * np.exp(V_p65 / -80.0)
+
+            # alpha_m = -0.1 * (V + 40) / (exp((V + 40) / -10) - 1)
+            # beta_m = 4 * exp((V + 65) / -18)
+            a_m = -0.1 * V_p40 / (np.exp(V_p40 / -10.0) - 1.0)
+            b_m = 4.0 * np.exp(V_p65 / -18.0)
+
+            # alpha_h = 0.07 * exp((V + 65) / -20)
+            # beta_h = 1 / (1 + exp((V + 35) / -10))
+            a_h = 0.07 * np.exp(V_p65 / -20.0)
+            b_h = 1.0 / (1.0 + np.exp(V_p35 / -10.0))
+
+            dm = a_m * (1.0 - m_old) - b_m * m_old
+            dh = a_h * (1.0 - h_old) - b_h * h_old
+            dn = a_n * (1.0 - n_old) - b_n * n_old
 
             m[i, :] = m_old + dm * dt_ms
             h[i, :] = h_old + dh * dt_ms
             n_gate[i, :] = n_old + dn * dt_ms
 
-            d2V = np.zeros(n_spatial)
-            d2V[1:-1] = V_old[2:] - 2 * V_old[1:-1] + V_old[:-2]
-            d2V[0] = V_old[1] - V_old[0]
-            d2V[-1] = V_old[-2] - V_old[-1]
+            # Compute second spatial derivative (vectorized)
+            if n_spatial > 1:
+                d2V[1:-1] = V_old[2:] - 2 * V_old[1:-1] + V_old[:-2]
+                d2V[0] = V_old[1] - V_old[0]
+                d2V[-1] = V_old[-2] - V_old[-1]
+            else:
+                d2V[0] = 0.0
 
-            I_inj = np.zeros(n_spatial)
-            if stim_start_idx <= i - 1 < stim_end_idx and 0 <= stim_index < n_spatial:
-                I_inj[stim_index] = stim_amplitude
+            # Apply stimulus only during stimulus window
+            if stim_start_idx <= i - 1 < stim_end_idx:
+                dV = diff_inv_C_m * d2V + (I_stim - I_Na - I_K - I_L) * inv_C_m
+            else:
+                dV = diff_inv_C_m * d2V - (I_Na + I_K + I_L) * inv_C_m
 
-            dV = (diffusion_coeff * d2V + I_inj - I_Na - I_K - I_L) / C_m
             V[i, :] = V_old + dV * dt_ms
 
         return {
@@ -172,35 +308,65 @@ def simulate_hh_model(
             "n_t": int(n_time),
         }
 
+    # No history - use in-place operations for efficiency
     V = np.full(n_spatial, v_rest, dtype=float)
     m = np.full(n_spatial, 0.0529, dtype=float)
     h = np.full(n_spatial, 0.5961, dtype=float)
     n_gate = np.full(n_spatial, 0.3177, dtype=float)
+
+    # Pre-allocate working arrays
+    d2V = np.zeros(n_spatial)
 
     for i in range(1, n_time):
         I_Na = g_Na * (m**3) * h * (V - E_Na)
         I_K = g_K * (n_gate**4) * (V - E_K)
         I_L = g_L * (V - E_L)
 
-        dm = alpha_m(V) * (1 - m) - beta_m(V) * m
-        dh = alpha_h(V) * (1 - h) - beta_h(V) * h
-        dn = alpha_n(V) * (1 - n_gate) - beta_n(V) * n_gate
+        # Inlined rate functions to eliminate function call overhead
+        # Pre-compute common subexpressions
+        V_p55 = V + 55.0
+        V_p40 = V + 40.0
+        V_p65 = V + 65.0
+        V_p35 = V + 35.0
 
-        m = m + dm * dt_ms
-        h = h + dh * dt_ms
-        n_gate = n_gate + dn * dt_ms
+        # alpha_n = -0.01 * (V + 55) / (exp((V + 55) / -10) - 1)
+        # beta_n = 0.125 * exp((V + 65) / -80)
+        a_n = -0.01 * V_p55 / (np.exp(V_p55 / -10.0) - 1.0)
+        b_n = 0.125 * np.exp(V_p65 / -80.0)
 
-        d2V = np.zeros(n_spatial)
-        d2V[1:-1] = V[2:] - 2 * V[1:-1] + V[:-2]
-        d2V[0] = V[1] - V[0]
-        d2V[-1] = V[-2] - V[-1]
+        # alpha_m = -0.1 * (V + 40) / (exp((V + 40) / -10) - 1)
+        # beta_m = 4 * exp((V + 65) / -18)
+        a_m = -0.1 * V_p40 / (np.exp(V_p40 / -10.0) - 1.0)
+        b_m = 4.0 * np.exp(V_p65 / -18.0)
 
-        I_inj = np.zeros(n_spatial)
-        if stim_start_idx <= i - 1 < stim_end_idx and 0 <= stim_index < n_spatial:
-            I_inj[stim_index] = stim_amplitude
+        # alpha_h = 0.07 * exp((V + 65) / -20)
+        # beta_h = 1 / (1 + exp((V + 35) / -10))
+        a_h = 0.07 * np.exp(V_p65 / -20.0)
+        b_h = 1.0 / (1.0 + np.exp(V_p35 / -10.0))
 
-        dV = (diffusion_coeff * d2V + I_inj - I_Na - I_K - I_L) / C_m
-        V = V + dV * dt_ms
+        dm = a_m * (1.0 - m) - b_m * m
+        dh = a_h * (1.0 - h) - b_h * h
+        dn = a_n * (1.0 - n_gate) - b_n * n_gate
+
+        m += dm * dt_ms
+        h += dh * dt_ms
+        n_gate += dn * dt_ms
+
+        # Compute second spatial derivative (vectorized)
+        if n_spatial > 1:
+            d2V[1:-1] = V[2:] - 2 * V[1:-1] + V[:-2]
+            d2V[0] = V[1] - V[0]
+            d2V[-1] = V[-2] - V[-1]
+        else:
+            d2V[0] = 0.0
+
+        # Apply stimulus only during stimulus window
+        if stim_start_idx <= i - 1 < stim_end_idx:
+            dV = diff_inv_C_m * d2V + (I_stim - I_Na - I_K - I_L) * inv_C_m
+        else:
+            dV = diff_inv_C_m * d2V - (I_Na + I_K + I_L) * inv_C_m
+
+        V += dV * dt_ms
 
     return {
         "V_final": V,

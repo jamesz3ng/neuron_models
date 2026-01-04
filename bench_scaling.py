@@ -6,14 +6,18 @@ Demonstrates that Fast Model is orders of magnitude faster than HH Cable.
 
 Models tested:
 - hh_cable: Full Hodgkin-Huxley cable equation (physics baseline)
-- fast_model: Pure delay-line model (proposed solution)
+- fast: Pre-generated HH waveform + delay-line propagation
+- hybrid_fast: Fresh HH generation + delay-line propagation (realistic cost)
+- cable: Pre-generated HH waveform + passive cable propagation
 """
 
 import time
 import numpy as np
 
 from hh_cable import simulate_hh_cable
+from hh_model import simulate_hh_model
 from fast_model import simulate_fast_model
+from cable_equation import simulate_cable_equation
 
 # =============================================================================
 # Configuration
@@ -22,7 +26,7 @@ from fast_model import simulate_fast_model
 T_MS = 100.0  # Simulation duration (ms)
 T_S = T_MS * 1e-3  # Simulation duration (s)
 
-# HH Cable optimized parameters (from benchmark_shapes.py)
+# HH Cable optimized parameters
 HH_CABLE_PARAMS = {
     "L": 5000.0,  # μm
     "dx": 50.0,  # μm
@@ -34,6 +38,29 @@ HH_CABLE_PARAMS = {
     "history_stride": 1,
 }
 
+# HH Model parameters (point neuron for waveform generation)
+HH_MODEL_PARAMS = {
+    "length": 0.01,  # Small cable (effectively point neuron)
+    "n_spatial": 1,  # Single compartment
+    "dt_s": 1e-5,  # s (0.01 ms)
+    "stim_start_s": 0.0,
+    "stim_end_s": 5e-3,  # 5 ms stimulus
+    "stim_amplitude": 20.0,
+    "stim_index": 0,
+    "store_history": True,  # Need history for waveform output
+    "history_stride": 1,
+}
+
+# Passive cable parameters
+CABLE_PARAMS = {
+    "L": 5000.0,  # μm (same as HH cable)
+    "dx": 50.0,  # μm
+    "dt_ms": 0.01,  # ms (same as HH cable dt)
+    "tau_ms": 10.0,
+    "lam": 200.0,
+    "store_history": False,
+}
+
 # Fast model parameters
 FAST_MODEL_DELAY_MS = 10.0  # Fixed delay
 
@@ -43,41 +70,22 @@ TIMEOUT_SECONDS = 5.0  # Skip larger N if previous took longer than this
 
 
 # =============================================================================
-# Pre-generate input waveform for fast_model
+# Pre-generate standard HH waveform (for fast and cable models)
 # =============================================================================
 
 
-def _generate_sample_waveform(
-    n_points: int, dt_ms: float
-) -> tuple[np.ndarray, np.ndarray]:
+def _generate_hh_waveform() -> tuple[np.ndarray, np.ndarray]:
     """
-    Generate a sample AP waveform for fast_model input.
-    Uses a simple parametric shape (not full HH simulation for speed).
+    Generate a standard HH waveform using simulate_hh_model.
+    Used as input for 'fast' and 'cable' models.
     """
-    t_ms = np.arange(n_points) * dt_ms
-
-    # Simple AP-like waveform: fast rise, slower fall
-    # Parameters tuned to match typical HH AP shape
-    peak_time = 10.0  # ms
-    rise_tau = 0.3  # ms
-    fall_tau = 1.5  # ms
-
-    v_rest = -65.0
-    v_peak = 40.0
-    v_undershoot = -75.0
-
-    # Rising phase (sigmoid)
-    rise = (v_peak - v_rest) / (1 + np.exp(-(t_ms - peak_time) / rise_tau))
-    # Falling phase (exponential decay after peak)
-    fall_mask = t_ms > peak_time
-    fall = np.zeros_like(t_ms)
-    fall[fall_mask] = (v_peak - v_undershoot) * np.exp(
-        -(t_ms[fall_mask] - peak_time) / fall_tau
+    result = simulate_hh_model(
+        T_s=T_S,
+        **HH_MODEL_PARAMS,
     )
-
-    # Combine: rise up to peak, then decay to undershoot
-    V = np.where(t_ms <= peak_time, v_rest + rise, v_undershoot + fall)
-
+    t_s = result["t_s"]
+    V = result["V"][:, 0]  # Single compartment
+    t_ms = t_s * 1e3
     return t_ms, V
 
 
@@ -101,7 +109,10 @@ def _time_hh_cable(n_neurons: int) -> float:
 def _time_fast_model(
     n_neurons: int, t_ms_input: np.ndarray, v_input: np.ndarray
 ) -> float:
-    """Time running fast_model simulation for N neurons sequentially."""
+    """
+    Time running fast_model simulation for N neurons sequentially.
+    Uses pre-generated waveform.
+    """
     start = time.perf_counter()
     for _ in range(n_neurons):
         simulate_fast_model(
@@ -113,68 +124,132 @@ def _time_fast_model(
     return elapsed
 
 
+def _time_hybrid_fast(n_neurons: int) -> float:
+    """
+    Time running hybrid model for N neurons sequentially.
+    Each iteration: fresh HH generation + fast_model delay.
+    """
+    start = time.perf_counter()
+    for _ in range(n_neurons):
+        # Step A: Generate fresh waveform with HH model
+        result = simulate_hh_model(
+            T_s=T_S,
+            **HH_MODEL_PARAMS,
+        )
+        t_s = result["t_s"]
+        V = result["V"][:, 0]
+        t_ms = t_s * 1e3
+
+        # Step B: Propagate with fast_model
+        simulate_fast_model(
+            v_input=V,
+            t_ms_input=t_ms,
+            delay_ms=FAST_MODEL_DELAY_MS,
+        )
+    elapsed = time.perf_counter() - start
+    return elapsed
+
+
+def _time_cable(n_neurons: int, t_ms_input: np.ndarray, v_input: np.ndarray) -> float:
+    """
+    Time running passive cable simulation for N neurons sequentially.
+    Uses pre-generated waveform as input at x=0.
+    """
+    start = time.perf_counter()
+    for _ in range(n_neurons):
+        simulate_cable_equation(
+            T_ms=T_MS,
+            v_input=v_input,
+            t_ms_input=t_ms_input,
+            **CABLE_PARAMS,
+        )
+    elapsed = time.perf_counter() - start
+    return elapsed
+
+
 def _run_scaling_benchmark() -> dict:
     """
     Run the scaling benchmark for all models.
 
     Returns dict mapping model_name -> list of (n, time) tuples
     """
-    # Pre-generate input waveform for fast_model
-    # Use same time resolution as HH cable
-    dt_ms = HH_CABLE_PARAMS["dt_s"] * 1e3
-    n_points = int(T_MS / dt_ms)
-    t_ms_input, v_input = _generate_sample_waveform(n_points, dt_ms)
+    # Pre-generate standard HH waveform for fast and cable models
+    print("Generating standard HH waveform for 'fast' and 'cable' models...")
+    t_ms_input, v_input = _generate_hh_waveform()
+    print(f"  Waveform: {len(v_input)} points, {t_ms_input[-1]:.1f} ms")
 
     results = {
         "hh_cable": [],
-        "fast_model": [],
+        "fast": [],
+        "hybrid_fast": [],
+        "cable": [],
     }
 
     # Track if we should skip due to timeout
-    skip_hh_cable = False
-    skip_fast_model = False
+    skip = {
+        "hh_cable": False,
+        "fast": False,
+        "hybrid_fast": False,
+        "cable": False,
+    }
 
     print(f"\nScaling Benchmark: T = {T_MS} ms, timeout = {TIMEOUT_SECONDS}s")
-    print("=" * 70)
-    print(f"{'N':>8}  {'HH Cable (s)':>14}  {'Fast Model (s)':>14}  {'Speedup':>10}")
-    print("-" * 70)
+    print("=" * 90)
+    header = f"{'N':>6}  {'HH Cable':>12}  {'Fast':>12}  {'Hybrid':>12}  {'Cable':>12}"
+    print(header)
+    print("-" * 90)
 
     for n in N_COUNTS:
-        hh_time = None
-        fast_time = None
+        row = f"{n:>6}  "
+        times = {}
 
-        # HH Cable
-        if not skip_hh_cable:
-            print(f"{n:>8}  ", end="", flush=True)
-            hh_time = _time_hh_cable(n)
-            results["hh_cable"].append((n, hh_time))
-            print(f"{hh_time:>14.4f}  ", end="", flush=True)
-
-            if hh_time > TIMEOUT_SECONDS:
-                skip_hh_cable = True
-                print("(timeout) ", end="")
+        # HH Cable (physics baseline)
+        if not skip["hh_cable"]:
+            t = _time_hh_cable(n)
+            results["hh_cable"].append((n, t))
+            times["hh_cable"] = t
+            row += f"{t:>12.4f}  "
+            if t > TIMEOUT_SECONDS:
+                skip["hh_cable"] = True
         else:
-            print(f"{n:>8}  {'skipped':>14}  ", end="", flush=True)
+            row += f"{'skip':>12}  "
 
-        # Fast Model
-        if not skip_fast_model:
-            fast_time = _time_fast_model(n, t_ms_input, v_input)
-            results["fast_model"].append((n, fast_time))
-            print(f"{fast_time:>14.6f}  ", end="", flush=True)
-
-            if fast_time > TIMEOUT_SECONDS:
-                skip_fast_model = True
+        # Fast (pre-generated waveform + delay)
+        if not skip["fast"]:
+            t = _time_fast_model(n, t_ms_input, v_input)
+            results["fast"].append((n, t))
+            times["fast"] = t
+            row += f"{t:>12.6f}  "
+            if t > TIMEOUT_SECONDS:
+                skip["fast"] = True
         else:
-            print(f"{'skipped':>14}  ", end="", flush=True)
+            row += f"{'skip':>12}  "
 
-        # Speedup factor
-        if hh_time is not None and fast_time is not None:
-            speedup = hh_time / fast_time
-            print(f"{speedup:>10.1f}x")
+        # Hybrid (fresh HH generation + delay)
+        if not skip["hybrid_fast"]:
+            t = _time_hybrid_fast(n)
+            results["hybrid_fast"].append((n, t))
+            times["hybrid_fast"] = t
+            row += f"{t:>12.4f}  "
+            if t > TIMEOUT_SECONDS:
+                skip["hybrid_fast"] = True
         else:
-            print(f"{'---':>10}")
+            row += f"{'skip':>12}  "
 
-    print("=" * 70)
+        # Cable (pre-generated waveform + passive propagation)
+        if not skip["cable"]:
+            t = _time_cable(n, t_ms_input, v_input)
+            results["cable"].append((n, t))
+            times["cable"] = t
+            row += f"{t:>12.4f}  "
+            if t > TIMEOUT_SECONDS:
+                skip["cable"] = True
+        else:
+            row += f"{'skip':>12}  "
+
+        print(row, flush=True)
+
+    print("=" * 90)
 
     return results
 
@@ -188,7 +263,7 @@ def _plot_scaling(results: dict, output_path: str):
     """Create log-log scaling plot."""
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(10, 7))
+    fig, ax = plt.subplots(figsize=(12, 8))
 
     # Plot styling
     styles = {
@@ -197,14 +272,28 @@ def _plot_scaling(results: dict, output_path: str):
             "marker": "o",
             "markersize": 8,
             "linewidth": 2,
-            "label": "HH Cable (physics baseline)",
+            "label": "HH Cable (full physics)",
         },
-        "fast_model": {
+        "fast": {
             "color": "red",
             "marker": "s",
             "markersize": 8,
             "linewidth": 2,
-            "label": "Fast Model (delay-line)",
+            "label": "Fast (pre-gen + delay)",
+        },
+        "hybrid_fast": {
+            "color": "blue",
+            "marker": "^",
+            "markersize": 8,
+            "linewidth": 2,
+            "label": "Hybrid (HH gen + delay)",
+        },
+        "cable": {
+            "color": "green",
+            "marker": "d",
+            "markersize": 8,
+            "linewidth": 2,
+            "label": "Cable (pre-gen + passive)",
         },
     }
 
@@ -216,27 +305,33 @@ def _plot_scaling(results: dict, output_path: str):
         style = styles.get(model_name, {})
         ax.loglog(n_values, times, **style)
 
-    # Add reference lines
+    # Add reference line for O(N)
     n_ref = np.array([1, 10000])
-    # O(N) reference
     ax.loglog(
-        n_ref, n_ref * 1e-5, "g--", alpha=0.5, linewidth=1, label="O(N) reference"
+        n_ref,
+        n_ref * 1e-5,
+        "gray",
+        linestyle="--",
+        alpha=0.5,
+        linewidth=1,
+        label="O(N) reference",
+    )
+
+    # Add timeout line
+    ax.axhline(TIMEOUT_SECONDS, color="orange", linestyle=":", alpha=0.7, linewidth=1.5)
+    ax.text(
+        1.5,
+        TIMEOUT_SECONDS * 1.2,
+        f"Timeout ({TIMEOUT_SECONDS}s)",
+        fontsize=9,
+        color="orange",
     )
 
     ax.set_xlabel("Number of Neurons (N)", fontsize=12)
     ax.set_ylabel("Simulation Time (seconds)", fontsize=12)
-    ax.set_title(f"Neuron Scaling Benchmark (T = {T_MS} ms)", fontsize=14)
+    ax.set_title(f"Neuron Scaling Benchmark (T = {T_MS} ms simulation)", fontsize=14)
     ax.legend(loc="upper left", fontsize=10)
     ax.grid(True, alpha=0.3, which="both")
-
-    # Add timeout line
-    ax.axhline(
-        TIMEOUT_SECONDS,
-        color="orange",
-        linestyle=":",
-        alpha=0.7,
-        label=f"Timeout ({TIMEOUT_SECONDS}s)",
-    )
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)
@@ -245,65 +340,55 @@ def _plot_scaling(results: dict, output_path: str):
 
 
 def _print_summary(results: dict):
-    """Print speedup summary for largest shared N."""
-    hh_data = results.get("hh_cable", [])
-    fast_data = results.get("fast_model", [])
+    """Print speedup summary."""
+    print("\n" + "=" * 70)
+    print("SPEEDUP SUMMARY (vs HH Cable)")
+    print("=" * 70)
 
-    if not hh_data or not fast_data:
-        print("\nInsufficient data for speedup summary.")
+    hh_data = {d[0]: d[1] for d in results.get("hh_cable", [])}
+
+    if not hh_data:
+        print("No HH Cable data for comparison.")
         return
 
-    # Find largest shared N
-    hh_ns = {d[0]: d[1] for d in hh_data}
-    fast_ns = {d[0]: d[1] for d in fast_data}
+    for model_name in ["fast", "hybrid_fast", "cable"]:
+        model_data = {d[0]: d[1] for d in results.get(model_name, [])}
+        shared_ns = sorted(set(hh_data.keys()) & set(model_data.keys()))
 
-    shared_ns = sorted(set(hh_ns.keys()) & set(fast_ns.keys()))
+        if not shared_ns:
+            print(f"\n{model_name}: No shared N values")
+            continue
 
-    if not shared_ns:
-        print("\nNo shared N values for speedup comparison.")
-        return
+        print(f"\n{model_name}:")
+        for n in shared_ns:
+            speedup = hh_data[n] / model_data[n]
+            print(f"  N={n:>5}: {speedup:>10.1f}x faster")
 
-    print("\n" + "=" * 50)
-    print("SPEEDUP SUMMARY")
-    print("=" * 50)
+    # Find largest N for each model and project HH cable time
+    print("\n" + "-" * 70)
+    print("PROJECTIONS (extrapolating HH Cable time)")
+    print("-" * 70)
 
-    for n in shared_ns:
-        hh_time = hh_ns[n]
-        fast_time = fast_ns[n]
-        speedup = hh_time / fast_time
-        print(f"N = {n:>5}: HH Cable = {hh_time:.4f}s, Fast Model = {fast_time:.6f}s")
-        print(f"          Speedup = {speedup:.1f}x")
+    # Estimate HH time per neuron from available data
+    if len(results["hh_cable"]) >= 1:
+        last_hh = results["hh_cable"][-1]
+        hh_time_per_neuron = last_hh[1] / last_hh[0]
 
-    # Highlight largest N
-    largest_n = shared_ns[-1]
-    final_speedup = hh_ns[largest_n] / fast_ns[largest_n]
-    print("-" * 50)
-    print(
-        f"At N = {largest_n}: Fast Model is {final_speedup:.0f}x faster than HH Cable"
-    )
-    print("=" * 50)
+        for model_name in ["fast", "hybrid_fast", "cable"]:
+            model_data = results.get(model_name, [])
+            if model_data:
+                largest_n = model_data[-1][0]
+                model_time = model_data[-1][1]
+                projected_hh = hh_time_per_neuron * largest_n
 
-    # Project time for larger N if we have data
-    if len(fast_data) > len(hh_data):
-        largest_fast_n = fast_data[-1][0]
-        largest_fast_time = fast_data[-1][1]
+                print(f"\nAt N = {largest_n}:")
+                print(f"  {model_name}: {model_time:.4f}s (actual)")
+                print(
+                    f"  HH Cable: {projected_hh:.1f}s = {projected_hh / 60:.1f} min (projected)"
+                )
+                print(f"  Speedup: {projected_hh / model_time:.0f}x")
 
-        # Estimate HH time by extrapolation (assuming linear scaling)
-        if len(hh_data) >= 2:
-            # Use last two HH points to estimate slope
-            n1, t1 = hh_data[-2]
-            n2, t2 = hh_data[-1]
-            time_per_neuron = (t2 - t1) / (n2 - n1)
-            estimated_hh_time = t2 + time_per_neuron * (largest_fast_n - n2)
-
-            print(f"\nProjection for N = {largest_fast_n}:")
-            print(f"  Fast Model actual:    {largest_fast_time:.4f}s")
-            print(
-                f"  HH Cable estimated:   {estimated_hh_time:.1f}s ({estimated_hh_time / 60:.1f} min)"
-            )
-            print(
-                f"  Estimated speedup:    {estimated_hh_time / largest_fast_time:.0f}x"
-            )
+    print("=" * 70)
 
 
 # =============================================================================
@@ -315,8 +400,12 @@ def main():
     print("=" * 70)
     print("NEURON SCALING BENCHMARK")
     print("=" * 70)
-    print(f"Testing: hh_cable vs fast_model")
-    print(f"Duration: {T_MS} ms per simulation")
+    print("Models:")
+    print("  - hh_cable:    Full HH cable equation (physics baseline)")
+    print("  - fast:        Pre-generated waveform + delay-line")
+    print("  - hybrid_fast: Fresh HH generation + delay-line")
+    print("  - cable:       Pre-generated waveform + passive cable")
+    print(f"\nDuration: {T_MS} ms per simulation")
     print(f"N values: {N_COUNTS}")
     print(f"Timeout: {TIMEOUT_SECONDS}s (skip larger N if exceeded)")
 
