@@ -5,6 +5,7 @@ Compares action potential shapes across models:
 - hh_cable.py (gold standard baseline) - recorded at midpoint
 - hh_model.py - recorded at stimulus site (x=0) due to propagation limitations
 - fast_model.py (delay-line using hh_cable waveform as input)
+- wave_model.py (1D wave equation with Gaussian pulse initial condition)
 
 Units: μm for length, ms for time, mV for voltage.
 
@@ -18,6 +19,7 @@ import numpy as np
 from hh_cable import simulate_hh_cable
 from hh_model import simulate_hh_model
 from fast_model import simulate_fast_model
+from wave_model import simulate_wave_model
 
 # =============================================================================
 # Configuration (hardcoded defaults)
@@ -198,6 +200,107 @@ def _run_fast_model(
     }
 
 
+def _run_wave_model(
+    L_um: float,
+    T_ms: float,
+    record_x_um: float,
+    source_x_um: float,
+    v_source: np.ndarray,
+    t_ms_source: np.ndarray,
+) -> dict:
+    """
+    Run wave_model simulation using clean HH waveform as input at x=0.
+
+    The wave model propagates the input waveform (recorded at source_x_um in the
+    original HH cable) via the 1D wave equation. The recording position in the
+    wave model corresponds to the distance from source to record position.
+
+    Parameters
+    ----------
+    L_um : float
+        Original cable length in μm (for reference)
+    T_ms : float
+        Simulation duration in ms
+    record_x_um : float
+        Recording position in original cable (μm)
+    source_x_um : float
+        Position where v_source was recorded in original cable (μm)
+    v_source : np.ndarray
+        Input voltage waveform (clean AP from hh_cable at source_x_um)
+    t_ms_source : np.ndarray
+        Time array for input waveform in ms
+
+    Returns dict with:
+        - t_ms: time array in ms
+        - V_record: voltage at recording position
+    """
+    # The wave needs to travel from source_x to record_x
+    # Distance in original cable: record_x_um - source_x_um
+    propagation_distance_um = record_x_um - source_x_um
+
+    # Wave model cable length should cover at least this distance
+    # Use normalized units where L_wave = 1.0
+    L_wave = 1.0
+
+    # Recording position in wave model: fraction of cable length
+    # We inject at x=0, so recording position is proportional to propagation distance
+    # Scale so that propagation_distance maps to some fraction of L_wave
+    # Let's use the ratio to the original cable length
+    record_x_wave = propagation_distance_um / L_um * L_wave
+
+    T_s = T_ms * 1e-3
+    t_s_source = t_ms_source * 1e-3
+
+    # Wave velocity: match CONDUCTION_VELOCITY
+    # Wave should travel propagation_distance_um in time = distance / velocity
+    travel_time_s = propagation_distance_um / CONDUCTION_VELOCITY * 1e-3
+    if travel_time_s > 0:
+        c_wave = record_x_wave / travel_time_s
+    else:
+        c_wave = 20.0  # Default
+
+    # Number of spatial points
+    nx = 200
+
+    # Initial value for grid initialization
+    v_init = v_source[0]
+
+    result = simulate_wave_model(
+        L=L_wave,
+        c=c_wave,
+        T_s=T_s,
+        nx=nx,
+        store_history=True,
+        history_stride=1,
+        v_input=v_source,
+        t_input=t_s_source,
+        v_init=v_init,
+    )
+
+    x = result["x"]
+    history = result["history"]
+    times = result["times"]
+
+    # Find the index closest to recording position
+    record_idx = int(record_x_wave * (nx - 1))
+    record_idx = max(0, min(record_idx, nx - 1))
+
+    # Extract voltage trace at recording position
+    V_record = np.array([h[record_idx] for h in history])
+    t_s = np.array(times)
+    t_ms = t_s * 1e3
+
+    return {
+        "t_ms": t_ms,
+        "V_record": V_record,
+        "V_source": v_source,
+        "model": "wave_model",
+        "record_x_wave": record_x_wave,
+        "c_wave": c_wave,
+        "propagation_distance_um": propagation_distance_um,
+    }
+
+
 # =============================================================================
 # Alignment & Normalization
 # =============================================================================
@@ -331,6 +434,12 @@ def _plot_comparison(traces: dict, output_path: str):
             "linestyle": "--",
             "label": "Fast Model (delayed)",
         },
+        "wave_model": {
+            "color": "green",
+            "linewidth": 1.5,
+            "linestyle": "-.",
+            "label": "Wave Model (1D wave eq.)",
+        },
     }
 
     # Main plot
@@ -396,7 +505,9 @@ def _print_metrics_table(metrics: list[dict]):
 def main():
     print("Running AP Shape Comparison Benchmark")
     print(f"  Axon length: {L_UM} μm")
-    print(f"  Recording position (hh_cable, fast_model): {RECORD_X_UM} μm (midpoint)")
+    print(
+        f"  Recording position (hh_cable, fast_model, wave_model): {RECORD_X_UM} μm (midpoint)"
+    )
     print(f"  Recording position (hh_model): x=0 (stimulus site - no propagation)")
     print(f"  Fast model input from: {FAST_MODEL_INPUT_X_UM} μm (clean AP)")
     print(f"  Simulation duration: {T_MS} ms")
@@ -421,12 +532,29 @@ def main():
     print(f"  fast_model input from x={fast_model_result['source_x_um']} μm")
     print(f"  fast_model delay: {fast_model_result['delay_ms']:.2f} ms")
 
+    print("Running wave_model simulation...")
+    # Use same input waveform as fast_model (clean AP at x=1500 μm)
+    wave_model_result = _run_wave_model(
+        L_um=L_UM,
+        T_ms=T_MS,
+        record_x_um=RECORD_X_UM,
+        source_x_um=FAST_MODEL_INPUT_X_UM,
+        v_source=hh_cable_result["V_source"],
+        t_ms_source=hh_cable_result["t_ms"],
+    )
+    print(f"  wave_model input from x={FAST_MODEL_INPUT_X_UM} μm (same as fast_model)")
+    print(
+        f"  wave_model propagation distance: {wave_model_result['propagation_distance_um']:.0f} μm"
+    )
+    print(f"  wave_model c_wave: {wave_model_result['c_wave']:.2f}")
+
     # Align traces
     print("\nAligning traces...")
     results = {
         "hh_cable": hh_cable_result,
         "hh_model": hh_model_result,
         "fast_model": fast_model_result,
+        "wave_model": wave_model_result,
     }
 
     aligned_traces = {}
@@ -444,7 +572,7 @@ def main():
     V_ref = aligned_traces["hh_cable"][1]
 
     interpolated = {"hh_cable": V_ref}
-    for name in ["hh_model", "fast_model"]:
+    for name in ["hh_model", "fast_model", "wave_model"]:
         t_aligned, V_aligned = aligned_traces[name]
         interpolated[name] = _interpolate_to_grid(t_aligned, V_aligned, t_ref)
 
@@ -452,7 +580,7 @@ def main():
     print("Calculating metrics...")
     metrics = []
 
-    for name in ["hh_cable", "hh_model", "fast_model"]:
+    for name in ["hh_cable", "hh_model", "fast_model", "wave_model"]:
         t_aligned, V_aligned = aligned_traces[name]
 
         fwhm = _calculate_fwhm(t_aligned, V_aligned, BASELINE_MV)
