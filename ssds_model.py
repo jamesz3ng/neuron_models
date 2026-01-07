@@ -44,7 +44,7 @@ STIM_DURATION_MS = 1.0  # Duration of each stimulus pulse
 
 # Spike extraction parameters
 WINDOW_PRE_MS = 2.0  # ms before peak
-WINDOW_POST_MS = 8.0  # ms after peak
+WINDOW_POST_MS = 12.0  # ms after peak
 WINDOW_TOTAL_MS = WINDOW_PRE_MS + WINDOW_POST_MS  # 10ms total
 WINDOW_POINTS = int(WINDOW_TOTAL_MS / DT_MS)  # 1000 points
 PRE_PEAK_POINTS = int(WINDOW_PRE_MS / DT_MS)  # 200 points
