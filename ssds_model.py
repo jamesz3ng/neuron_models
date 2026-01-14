@@ -27,7 +27,7 @@ STIM_DURATION_MS = 1.0  # Duration of each stimulus pulse
 
 # Spike extraction parameters
 WINDOW_PRE_MS = 2.0  # ms before peak
-WINDOW_POST_MS = 20.0  # ms after peak (increased for full AHP capture)
+WINDOW_POST_MS = 12.0  # ms after peak (increased for full AHP capture)
 WINDOW_TOTAL_MS = WINDOW_PRE_MS + WINDOW_POST_MS
 WINDOW_POINTS = int(WINDOW_TOTAL_MS / DT_MS)
 PRE_PEAK_POINTS = int(WINDOW_PRE_MS / DT_MS)
@@ -342,14 +342,10 @@ def _simulate_and_harvest(
     return spikes
 
 
-# =============================================================================
 # Protocol A: Fatigue Spectrum
-# =============================================================================
 
 
 def generate_protocol_a() -> list[dict]:
-    """Generate fatigued spikes from 10-pulse trains at multiple frequencies."""
-
     # from input frequency test we can see that at 70hz there is ~0.2% diff between first and last spike -> indicates that the neuron is not tired/fatigued
     # 90hz ~ 7% diff
     # 100hz ~ 18% diff
@@ -379,13 +375,10 @@ def generate_protocol_a() -> list[dict]:
     return all_spikes
 
 
-# =============================================================================
 # Protocol B: Refractory Curve
-# =============================================================================
 
 
 def generate_protocol_b() -> list[dict]:
-    """Generate refractory recovery spikes from paired-pulse protocol."""
     print("Protocol B: Refractory Curve (paired pulses, ISI 2.0-20.0ms, step 0.2ms)...")
 
     isi_values = np.arange(2.0, 20.2, 0.2)
@@ -408,13 +401,10 @@ def generate_protocol_b() -> list[dict]:
     return spikes
 
 
-# =============================================================================
 # Protocol C: Population Heterogeneity
-# =============================================================================
 
 
 def generate_protocol_c(n_samples: int = 1000, seed: int = 42) -> list[dict]:
-    """Generate population variance spikes with g_Na/g_K ±15% variation."""
     print(f"Protocol C: Population Heterogeneity ({n_samples} samples, ±15%)...")
 
     np.random.seed(seed)
@@ -447,7 +437,6 @@ def generate_protocol_c(n_samples: int = 1000, seed: int = 42) -> list[dict]:
 
 
 def generate_protocol_d(n_samples: int = 50) -> list[dict]:
-    """Generate super-charged spikes from hyperpolarized initial states."""
     print("Protocol D: Hyperpolarization Rebound (super-charged spikes)...")
 
     v_hyper_levels = [-70, -75, -80, -85, -90]

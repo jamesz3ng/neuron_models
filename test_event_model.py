@@ -18,7 +18,7 @@ from event_model import EventPropagator, _generate_hh_signal
 
 # Test a range of intervals to find the "Cutoff" point
 # We expect the model (lockout=5ms) to block spikes with ISI < 5ms
-TEST_ISIS = [3.0, 4.0, 5.5, 7.0, 10.0, 15.0]
+TEST_ISIS = [1, 2, 2.5, 3.0, 4.0, 5.5, 7.0, 10.0, 15.0]
 
 DELAY_MS = 5.0
 LOCKOUT_MS = 5.0  # Must match the internal setting in EventPropagator (default 5.0)
