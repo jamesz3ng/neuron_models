@@ -17,250 +17,23 @@ Target: ~1,100 spikes to ensure robust PCA capturing full AP shape space.
 import numpy as np
 from sklearn.decomposition import PCA
 
+from physics import HHPhysics
+from simulation import run_simulation, create_pulse_train, DT_MS, STIM_AMPLITUDE, STIM_DURATION_MS
+from analysis import find_spike_peaks, extract_aligned_spike
+
 # =============================================================================
 # Configuration
 # =============================================================================
 
-DT_MS = 0.01  # Time step (ms)
-STIM_AMPLITUDE = 30.0  # nA/mm² stimulus current
-STIM_DURATION_MS = 1.0  # Duration of each stimulus pulse
-
 # Spike extraction parameters
 WINDOW_PRE_MS = 2.0  # ms before peak
-WINDOW_POST_MS = 12.0  # ms after peak (increased for full AHP capture)
+WINDOW_POST_MS = 15  # ms after peak (increased for full AHP capture)
 WINDOW_TOTAL_MS = WINDOW_PRE_MS + WINDOW_POST_MS
 WINDOW_POINTS = int(WINDOW_TOTAL_MS / DT_MS)
 PRE_PEAK_POINTS = int(WINDOW_PRE_MS / DT_MS)
 POST_PEAK_POINTS = int(WINDOW_POST_MS / DT_MS)
 
 SPIKE_THRESHOLD_MV = -20.0
-
-
-# =============================================================================
-# HHPhysics Class - Encapsulates all Hodgkin-Huxley constants and functions
-# =============================================================================
-
-
-class HHPhysics:
-    """Hodgkin-Huxley model physics with safe rate functions."""
-
-    # Membrane capacitance and conductances
-    C_m = 1.0  # μF/cm²
-    g_Na = 120.0  # mS/cm²
-    g_K = 36.0
-    g_L = 0.3
-
-    # Reversal potentials (mV)
-    E_Na = 50.0
-    E_K = -77.0
-    E_L = -54.387
-    v_rest = -65.0
-
-    # Singularity voltages for vtrap
-    _V_SING_M = -40.0  # α_m singularity
-    _V_SING_N = -55.0  # α_n singularity
-    _VTRAP_EPS = 1e-7  # Threshold for vtrap activation
-
-    @staticmethod
-    def _vtrap(x: float, y: float) -> float:
-        """
-        Safe evaluation of x/(exp(x/y) - 1) near singularities.
-
-        Uses first-order Taylor expansion when |x| < epsilon:
-        x/(exp(x/y) - 1) ≈ y - x/2 + O(x²)
-        """
-        if abs(x) < HHPhysics._VTRAP_EPS:
-            return y - x / 2.0
-        return x / (np.exp(x / y) - 1.0)
-
-    @staticmethod
-    def rates(V: float) -> tuple[float, float, float, float, float, float]:
-        """
-        Compute HH rate constants at voltage V.
-
-        Returns (alpha_m, beta_m, alpha_h, beta_h, alpha_n, beta_n).
-        Uses vtrap for α_m (at -40mV) and α_n (at -55mV) to avoid division by zero.
-        """
-        # α_m: vtrap at V = -40mV
-        # Standard form: 0.1*(V+40)/(1-exp(-(V+40)/10)) = -0.1*(V+40)/(exp((V+40)/-10)-1)
-        x_m = V + 40.0
-        alpha_m = -0.1 * HHPhysics._vtrap(x_m, -10.0)
-        beta_m = 4.0 * np.exp((V + 65.0) / -18.0)
-
-        # α_h, β_h: no singularities
-        alpha_h = 0.07 * np.exp((V + 65.0) / -20.0)
-        beta_h = 1.0 / (1.0 + np.exp((V + 35.0) / -10.0))
-
-        # α_n: vtrap at V = -55mV
-        # Standard form: 0.01*(V+55)/(1-exp(-(V+55)/10)) = -0.01*(V+55)/(exp((V+55)/-10)-1)
-        x_n = V + 55.0
-        alpha_n = -0.01 * HHPhysics._vtrap(x_n, -10.0)
-        beta_n = 0.125 * np.exp((V + 65.0) / -80.0)
-
-        return alpha_m, beta_m, alpha_h, beta_h, alpha_n, beta_n
-
-    @staticmethod
-    def steady_state(V: float) -> tuple[float, float, float]:
-        """
-        Compute steady-state gate values at voltage V.
-
-        Returns (m_inf, h_inf, n_inf).
-        """
-        alpha_m, beta_m, alpha_h, beta_h, alpha_n, beta_n = HHPhysics.rates(V)
-
-        m_inf = alpha_m / (alpha_m + beta_m)
-        h_inf = alpha_h / (alpha_h + beta_h)
-        n_inf = alpha_n / (alpha_n + beta_n)
-
-        return m_inf, h_inf, n_inf
-
-
-# =============================================================================
-# Simulation Functions
-# =============================================================================
-
-
-def run_simulation(
-    t_end_ms: float,
-    i_stim: np.ndarray,
-    *,
-    g_na_scale: float = 1.0,
-    g_k_scale: float = 1.0,
-    v_init: float | None = None,
-    gates_init: tuple[float, float, float] | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Run HH simulation with custom stimulus and optional initial conditions.
-
-    Parameters
-    ----------
-    t_end_ms : float
-        Simulation duration in ms.
-    i_stim : np.ndarray
-        Stimulus current array (length must match n_time).
-    g_na_scale : float
-        Scale factor for g_Na (1.0 = default).
-    g_k_scale : float
-        Scale factor for g_K (1.0 = default).
-    v_init : float | None
-        Initial voltage. If None, uses v_rest.
-    gates_init : tuple[float, float, float] | None
-        Initial (m, h, n) values. If None, uses steady-state at v_init.
-
-    Returns
-    -------
-    tuple[np.ndarray, np.ndarray]
-        (t_ms, V) arrays.
-    """
-    n_time = int(t_end_ms / DT_MS)
-    t_ms = np.arange(n_time) * DT_MS
-
-    if len(i_stim) != n_time:
-        raise ValueError(f"i_stim length ({len(i_stim)}) != n_time ({n_time})")
-
-    # Conductances
-    g_Na = HHPhysics.g_Na * g_na_scale
-    g_K = HHPhysics.g_K * g_k_scale
-    g_L = HHPhysics.g_L
-    E_Na, E_K, E_L = HHPhysics.E_Na, HHPhysics.E_K, HHPhysics.E_L
-    inv_C_m = 1.0 / HHPhysics.C_m
-
-    # Initial conditions
-    V = v_init if v_init is not None else HHPhysics.v_rest
-
-    if gates_init is not None:
-        m, h, n = gates_init
-    else:
-        m, h, n = HHPhysics.steady_state(V)
-
-    # History
-    V_hist = np.zeros(n_time)
-    V_hist[0] = V
-
-    # Integration loop
-    for i in range(1, n_time):
-        # Ionic currents
-        I_Na = g_Na * (m**3) * h * (V - E_Na)
-        I_K = g_K * (n**4) * (V - E_K)
-        I_L = g_L * (V - E_L)
-
-        # Gate kinetics (using safe rates)
-        alpha_m, beta_m, alpha_h, beta_h, alpha_n, beta_n = HHPhysics.rates(V)
-
-        dm = alpha_m * (1.0 - m) - beta_m * m
-        dh = alpha_h * (1.0 - h) - beta_h * h
-        dn = alpha_n * (1.0 - n) - beta_n * n
-
-        m += dm * DT_MS
-        h += dh * DT_MS
-        n += dn * DT_MS
-
-        # Voltage update
-        dV = (i_stim[i - 1] - I_Na - I_K - I_L) * inv_C_m
-        V += dV * DT_MS
-
-        V_hist[i] = V
-
-    return t_ms, V_hist
-
-
-def _create_pulse_train(
-    t_end_ms: float,
-    pulse_times_ms: list[float],
-) -> np.ndarray:
-    """Create stimulus array with pulses at specified times."""
-    n_time = int(t_end_ms / DT_MS)
-    i_stim = np.zeros(n_time)
-
-    for t_pulse in pulse_times_ms:
-        start_idx = int(t_pulse / DT_MS)
-        end_idx = int((t_pulse + STIM_DURATION_MS) / DT_MS)
-        end_idx = min(end_idx, n_time)
-        if start_idx < n_time:
-            i_stim[start_idx:end_idx] = STIM_AMPLITUDE
-
-    return i_stim
-
-
-# =============================================================================
-# Spike Detection and Extraction
-# =============================================================================
-
-
-def _find_spike_peaks(V: np.ndarray) -> list[int]:
-    """Find indices of spike peaks in voltage trace."""
-    peaks = []
-    in_spike = False
-    max_v = -np.inf
-    max_idx = 0
-
-    for i in range(len(V)):
-        if V[i] >= SPIKE_THRESHOLD_MV and not in_spike:
-            in_spike = True
-            max_v = V[i]
-            max_idx = i
-        elif in_spike and V[i] >= SPIKE_THRESHOLD_MV:
-            if V[i] > max_v:
-                max_v = V[i]
-                max_idx = i
-        elif in_spike and V[i] < SPIKE_THRESHOLD_MV:
-            peaks.append(max_idx)
-            in_spike = False
-            max_v = -np.inf
-
-    return peaks
-
-
-def _extract_aligned_spike(V: np.ndarray, peak_idx: int) -> np.ndarray | None:
-    """Extract spike waveform aligned to peak. Returns None if out of bounds."""
-    start_idx = peak_idx - PRE_PEAK_POINTS
-    end_idx = peak_idx + POST_PEAK_POINTS
-
-    if start_idx < 0 or end_idx > len(V):
-        return None
-
-    return V[start_idx:end_idx].copy()
-
 
 # =============================================================================
 # Harvester - Generic simulate-and-extract pipeline
@@ -304,7 +77,7 @@ def _simulate_and_harvest(
     t_end_ms = pulse_times_ms[-1] + WINDOW_POST_MS + 5.0
 
     # Create stimulus and run simulation
-    i_stim = _create_pulse_train(t_end_ms, pulse_times_ms)
+    i_stim = create_pulse_train(t_end_ms, pulse_times_ms)
     t_ms, V = run_simulation(
         t_end_ms,
         i_stim,
@@ -315,7 +88,7 @@ def _simulate_and_harvest(
     )
 
     # Find peaks
-    peaks = _find_spike_peaks(V)
+    peaks = find_spike_peaks(V)
 
     # Determine which spikes to extract
     if extract_indices is None:
@@ -327,7 +100,7 @@ def _simulate_and_harvest(
     spikes = []
     for i in indices_to_extract:
         peak_idx = peaks[i]
-        waveform = _extract_aligned_spike(V, peak_idx)
+        waveform = extract_aligned_spike(V, peak_idx, PRE_PEAK_POINTS, POST_PEAK_POINTS)
         if waveform is not None:
             spike_data = {
                 "waveform": waveform,
@@ -350,7 +123,7 @@ def generate_protocol_a() -> list[dict]:
     # 90hz ~ 7% diff
     # 100hz ~ 18% diff
 
-    frequencies_hz = [70]
+    frequencies_hz = [60]
     print(f"Protocol A: Fatigue Spectrum (10 pulses at {frequencies_hz} Hz)...")
 
     all_spikes = []

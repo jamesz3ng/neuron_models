@@ -9,188 +9,14 @@ Goal: Identify optimal frequency for PCA library generation.
 """
 
 import numpy as np
-from math import exp as math_exp
 
-
-# =============================================================================
-# HH Model (copied from ssds_model.py for standalone execution)
-# =============================================================================
-
-DEFAULT_PARAMS = {
-    "C_m": 1.0,
-    "g_Na": 120.0,
-    "g_K": 36.0,
-    "g_L": 0.3,
-    "E_Na": 50.0,
-    "E_K": -77.0,
-    "E_L": -54.387,
-    "v_rest": -65.0,
-}
-
-
-def run_custom_hh(
-    t_end_ms: float,
-    dt_ms: float,
-    i_stim_array: np.ndarray,
-    g_na_scale: float = 1.0,
-    g_k_scale: float = 1.0,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Run HH model with custom stimulus current array."""
-    C_m = DEFAULT_PARAMS["C_m"]
-    g_Na = DEFAULT_PARAMS["g_Na"] * g_na_scale
-    g_K = DEFAULT_PARAMS["g_K"] * g_k_scale
-    g_L = DEFAULT_PARAMS["g_L"]
-    E_Na = DEFAULT_PARAMS["E_Na"]
-    E_K = DEFAULT_PARAMS["E_K"]
-    E_L = DEFAULT_PARAMS["E_L"]
-    v_rest = DEFAULT_PARAMS["v_rest"]
-
-    inv_C_m = 1.0 / C_m
-    n_time = int(t_end_ms / dt_ms)
-    t_ms = np.arange(n_time) * dt_ms
-
-    if len(i_stim_array) != n_time:
-        raise ValueError(
-            f"i_stim_array length ({len(i_stim_array)}) != n_time ({n_time})"
-        )
-
-    V_val = v_rest
-    m_val = 0.0529
-    h_val = 0.5961
-    n_val = 0.3177
-
-    V_hist = np.zeros(n_time)
-    V_hist[0] = V_val
-
-    for i in range(1, n_time):
-        I_Na = g_Na * (m_val**3) * h_val * (V_val - E_Na)
-        I_K = g_K * (n_val**4) * (V_val - E_K)
-        I_L = g_L * (V_val - E_L)
-
-        V_p55 = V_val + 55.0
-        V_p40 = V_val + 40.0
-        V_p65 = V_val + 65.0
-        V_p35 = V_val + 35.0
-
-        a_n = -0.01 * V_p55 / (math_exp(V_p55 / -10.0) - 1.0)
-        b_n = 0.125 * math_exp(V_p65 / -80.0)
-        a_m = -0.1 * V_p40 / (math_exp(V_p40 / -10.0) - 1.0)
-        b_m = 4.0 * math_exp(V_p65 / -18.0)
-        a_h = 0.07 * math_exp(V_p65 / -20.0)
-        b_h = 1.0 / (1.0 + math_exp(V_p35 / -10.0))
-
-        dm = a_m * (1.0 - m_val) - b_m * m_val
-        dh = a_h * (1.0 - h_val) - b_h * h_val
-        dn = a_n * (1.0 - n_val) - b_n * n_val
-
-        m_val += dm * dt_ms
-        h_val += dh * dt_ms
-        n_val += dn * dt_ms
-
-        I_stim = i_stim_array[i - 1]
-        dV = (I_stim - I_Na - I_K - I_L) * inv_C_m
-        V_val += dV * dt_ms
-
-        V_hist[i] = V_val
-
-    return t_ms, V_hist
-
-
-def create_pulse_train(
-    t_end_ms: float,
-    dt_ms: float,
-    pulse_times_ms: list[float],
-    pulse_duration_ms: float,
-    amplitude: float,
-) -> np.ndarray:
-    """Create stimulus array with pulses at specified times."""
-    n_time = int(t_end_ms / dt_ms)
-    i_stim = np.zeros(n_time)
-
-    for t_pulse in pulse_times_ms:
-        start_idx = int(t_pulse / dt_ms)
-        end_idx = int((t_pulse + pulse_duration_ms) / dt_ms)
-        end_idx = min(end_idx, n_time)
-        if start_idx < n_time:
-            i_stim[start_idx:end_idx] = amplitude
-
-    return i_stim
-
+from physics import HHPhysics
+from simulation import run_simulation, create_pulse_train
+from analysis import find_spike_peaks, measure_spike_width, extract_aligned_spike
 
 # =============================================================================
-# Spike Analysis Functions
+# HH Model & Analysis
 # =============================================================================
-
-SPIKE_THRESHOLD_MV = -20.0
-
-
-def find_spike_peaks(
-    V: np.ndarray, threshold_mv: float = SPIKE_THRESHOLD_MV
-) -> list[int]:
-    """Find indices of spike peaks in voltage trace."""
-    peaks = []
-    in_spike = False
-    max_v = -np.inf
-    max_idx = 0
-
-    for i in range(len(V)):
-        if V[i] >= threshold_mv and not in_spike:
-            in_spike = True
-            max_v = V[i]
-            max_idx = i
-        elif in_spike and V[i] >= threshold_mv:
-            if V[i] > max_v:
-                max_v = V[i]
-                max_idx = i
-        elif in_spike and V[i] < threshold_mv:
-            peaks.append(max_idx)
-            in_spike = False
-            max_v = -np.inf
-
-    return peaks
-
-
-def measure_spike_width(V: np.ndarray, peak_idx: int, dt_ms: float) -> float:
-    """
-    Measure spike width at half-maximum (FWHM).
-
-    Returns width in ms, or -1 if measurement fails.
-    """
-    peak_v = V[peak_idx]
-    baseline = -65.0  # Approximate resting potential
-    half_max = (peak_v + baseline) / 2
-
-    # Find left crossing
-    left_idx = peak_idx
-    while left_idx > 0 and V[left_idx] > half_max:
-        left_idx -= 1
-
-    # Find right crossing
-    right_idx = peak_idx
-    while right_idx < len(V) - 1 and V[right_idx] > half_max:
-        right_idx += 1
-
-    if left_idx == 0 or right_idx == len(V) - 1:
-        return -1.0
-
-    width_ms = (right_idx - left_idx) * dt_ms
-    return width_ms
-
-
-def extract_spike_window(
-    V: np.ndarray,
-    peak_idx: int,
-    pre_points: int,
-    post_points: int,
-) -> np.ndarray | None:
-    """Extract spike waveform aligned to peak."""
-    start_idx = peak_idx - pre_points
-    end_idx = peak_idx + post_points
-
-    if start_idx < 0 or end_idx > len(V):
-        return None
-
-    return V[start_idx:end_idx].copy()
 
 
 # =============================================================================
@@ -236,11 +62,15 @@ def run_frequency_sweep():
         t_end_ms = pulse_times[-1] + 20.0  # Extra time after last pulse
 
         i_stim = create_pulse_train(
-            t_end_ms, dt_ms, pulse_times, stim_duration_ms, stim_amplitude
+            t_end_ms, 
+            pulse_times, 
+            dt_ms=dt_ms, 
+            stim_duration_ms=stim_duration_ms, 
+            stim_amplitude=stim_amplitude
         )
 
         # Run simulation
-        t_ms, V = run_custom_hh(t_end_ms, dt_ms, i_stim)
+        t_ms, V = run_simulation(t_end_ms, i_stim, dt_ms=dt_ms)
 
         # Store trace for key frequencies
         if freq_hz in [90, 100, 150]:
@@ -268,10 +98,10 @@ def run_frequency_sweep():
             )
 
             # Extract waveforms for plotting
-            first_waveform = extract_spike_window(
+            first_waveform = extract_aligned_spike(
                 V, first_peak_idx, pre_points, post_points
             )
-            last_waveform = extract_spike_window(
+            last_waveform = extract_aligned_spike(
                 V, last_peak_idx, pre_points, post_points
             )
 

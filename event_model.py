@@ -8,8 +8,6 @@ Simulates axonal propagation by:
 4. Reconstructing waveforms at destination
 """
 
-from math import exp as math_exp
-
 import numpy as np
 from scipy.interpolate import interp1d
 
@@ -167,62 +165,30 @@ def _generate_hh_signal(
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Unified generator for all test protocols.
-    Replaces both _generate_fatigue_train and the manual loops.
+    Uses run_simulation from ssds_model for HH physics.
     """
-    # Parameters
-    C_m, g_L, E_Na, E_K, E_L = 1.0, 0.3, 50.0, -77.0, -54.387
-    g_Na = 120.0 * g_na_scale
-    g_K = 36.0 * g_k_scale
-    dt_ms = 0.01
+    from simulation import run_simulation, DT_MS
 
     # Stimulus setup
     isi_ms = 1000.0 / freq_hz
     t_end_ms = pre_ms + (n_pulses * isi_ms) + post_ms
-    n_time = int(t_end_ms / dt_ms)
-    t_ms = np.arange(n_time) * dt_ms
+    n_time = int(t_end_ms / DT_MS)
 
     i_stim = np.zeros(n_time)
     for k in range(n_pulses):
         t_pulse = pre_ms + k * isi_ms
-        start = int(t_pulse / dt_ms)
-        end = int((t_pulse + 1.0) / dt_ms)  # 1ms duration
+        start = int(t_pulse / DT_MS)
+        end = int((t_pulse + 1.0) / DT_MS)  # 1ms duration
         if start < n_time:
             i_stim[start : min(end, n_time)] = 30.0  # Amplitude
 
-    # Rate functions (Steady state calc)
-    def rates(v):
-        vp = v + 0.001 if abs(v + 40) < 0.001 or abs(v + 55) < 0.001 else v
-        am = -0.1 * (vp + 40) / (math_exp(-(vp + 40) / 10) - 1)
-        bm = 4.0 * math_exp(-(vp + 65) / 18)
-        ah = 0.07 * math_exp(-(vp + 65) / 20)
-        bh = 1.0 / (1.0 + math_exp(-(vp + 35) / 10))
-        an = -0.01 * (vp + 55) / (math_exp(-(vp + 55) / 10) - 1)
-        bn = 0.125 * math_exp(-(vp + 65) / 80)
-        return am, bm, ah, bh, an, bn
-
-    # Initialization
-    am, bm, ah, bh, an, bn = rates(v_init)
-    m, h, n = am / (am + bm), ah / (ah + bh), an / (an + bn)
-    v = v_init
-
-    v_hist = np.zeros(n_time)
-    v_hist[0] = v
-
-    # Loop
-    for i in range(1, n_time):
-        am, bm, ah, bh, an, bn = rates(v)
-        m += (am * (1 - m) - bm * m) * dt_ms
-        h += (ah * (1 - h) - bh * h) * dt_ms
-        n += (an * (1 - n) - bn * n) * dt_ms
-
-        i_ion = (
-            (g_Na * m**3 * h * (v - E_Na))
-            + (g_K * n**4 * (v - E_K))
-            + (g_L * (v - E_L))
-        )
-
-        v += ((i_stim[i - 1] - i_ion) / C_m) * dt_ms
-        v_hist[i] = v
+    t_ms, v_hist = run_simulation(
+        t_end_ms,
+        i_stim,
+        g_na_scale=g_na_scale,
+        g_k_scale=g_k_scale,
+        v_init=v_init,
+    )
 
     return t_ms, v_hist
 
