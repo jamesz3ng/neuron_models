@@ -184,8 +184,8 @@ def generate_protocol_c(n_samples: int = 1000, seed: int = 42) -> list[dict]:
     spikes = []
 
     for _ in range(n_samples):
-        g_na_scale = np.random.uniform(0.85, 1.15)
-        g_k_scale = np.random.uniform(0.85, 1.15)
+        g_na_scale = np.random.uniform(0.5, 2)
+        g_k_scale = np.random.uniform(0.5, 2)
 
         result = _simulate_and_harvest(
             [5.0],  # Single pulse
@@ -786,7 +786,7 @@ def main():
 
     spikes_a = generate_protocol_a()
     spikes_b = generate_protocol_b()
-    spikes_c = generate_protocol_c(n_samples=300)
+    spikes_c = generate_protocol_c(n_samples=1000)
     spikes_d = generate_protocol_d(n_samples=50)
 
     all_spikes = spikes_a + spikes_b + spikes_c + spikes_d

@@ -9,11 +9,6 @@ from event_model import EventPropagator
 from physics import HHPhysics
 from simulation import DT_MS, run_simulation
 
-# =============================================================================
-# Coupled Simulation (The New Physics)
-# =============================================================================
-
-
 def run_coupled_simulation(
     t_end_ms: float,
     v_pre_trace: np.ndarray,
@@ -102,7 +97,7 @@ def run_external_simulation(t_end_ms, stim_start=10.0, stim_amp=30.0):
 
 # =============================================================================
 # Main Demo
-# =============================================================================
+# ============================================================================= 
 
 
 def main():
@@ -127,9 +122,8 @@ def main():
     res1 = prop.simulate(v_soma1, t_ms)
     v_axon1 = res1["v_out"]
     print(v_axon1, len(v_axon1))
-    # Neuron 2: The Victim (Sick)
+    # Neuron 2: 
     print("[N2] Receiving input from Axon 1...")
-    # Reduced Sodium (60%) -> Harder to fire, smaller spike
     _, v_soma2 = run_coupled_simulation(
         t_end, v_pre_trace=v_axon1, coupling_conductance=G_COUPLE, g_na_scale=1.0
     )
@@ -138,10 +132,9 @@ def main():
     v_axon2 = res2["v_out"]
     print(v_axon2, len(v_axon1))
 
-    # Neuron 3: The Recovery (Healthy)
-    #
+    # Neuron 3: The Recovery 
+    
     print("[N3] Receiving input from Axon 2...")
-    # Normal Sodium -> Should recover full height IF the input is strong enough
     _, v_soma3 = run_coupled_simulation(
         t_end, v_pre_trace=v_axon2, coupling_conductance=G_COUPLE, g_na_scale=1.0
     )
@@ -164,9 +157,6 @@ def main():
 
     # Plot N3
     axes[2].plot(t_ms, v_soma3, "k", label="Soma")
-    axes[2].plot(
-        t_ms, v_axon1, "g:", alpha=0.5, label="Ref (N1 Axon End)"
-    )  # Show timing ref
     axes[2].set_title(f"Neuron 3 - Peak: {np.max(v_soma3):.1f}mV")
     axes[2].legend(loc="upper right")
 
