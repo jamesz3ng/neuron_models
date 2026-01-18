@@ -1,6 +1,9 @@
 import argparse
 import statistics
+import sys
 import time
+
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
 
 
 def _time_call(fn, *, warmup: int, repeats: int):

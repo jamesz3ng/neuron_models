@@ -19,9 +19,49 @@ We are implementing and benchmarking a **1D Wave Equation** as a candidate for f
 
 ## Build & Run Commands
 - **Install deps**: `uv sync`
-- **Run model**: `python <model>.py` (e.g., `python hh_model.py`)
-- **Benchmark**: `python bench_models.py <model>` (options: `hh_cable`, `hh_model`, `wave_model`, `common`)
+- **Run model**: `python src/<model>.py` (e.g., `python src/hh_model.py`)
+- **Benchmark**: `python benchmarks/bench_models.py <model>` (options: `hh_cable`, `hh_model`, `wave_model`, `common`)
+- **Run demo**: `python demos/<demo>.py` (e.g., `python demos/demo_chain.py`)
+- **Run tests**: `python tests/test_event_model.py`
 - **No test/lint configured** - run scripts directly to verify
+
+## Project Structure
+```
+neuron_models/
+├── src/                    # Core model implementations
+│   ├── physics.py          # HH physics constants & rate functions
+│   ├── simulation.py       # Simulation utilities & pulse generation
+│   ├── analysis.py         # Spike detection & analysis
+│   ├── hh_model.py         # Hodgkin-Huxley point neuron
+│   ├── hh_cable.py         # HH cable equation (spatial)
+│   ├── wave_model.py       # 1D wave equation
+│   ├── cable_equation.py   # Passive cable equation
+│   ├── event_model.py      # Event-based propagation with PCA
+│   ├── fast_model.py       # Delay-line with refractory filtering
+│   ├── simple_model.py     # Izhikevich neuron
+│   ├── ssds_model.py       # Spike Shape Decomposition System
+│   └── transport_model.py  # Transport equation for dendrites
+├── benchmarks/             # Performance benchmarks
+│   ├── bench_models.py     # Main benchmark CLI
+│   ├── bench_bar_chart.py  # Propagation speed comparison
+│   ├── bench_scaling.py    # Neuron scaling benchmark
+│   ├── bench_spatial_complexity.py  # Spatial resolution benchmark
+│   ├── benchmark_memory.py # Memory usage benchmark
+│   └── benchmark_shapes.py # AP shape comparison
+├── demos/                  # Demo & visualization scripts
+│   ├── demo_chain.py       # Coupled neuron chain
+│   ├── demo_refractory.py  # Refractory period demo
+│   ├── demo_soma_ais.py    # Soma-AIS validation
+│   ├── debug_hh_physics.py # HH physics debugging
+│   ├── input_frequency_test.py  # Frequency sweep test
+│   └── inspect_basis.py    # PCA basis inspection
+├── tests/                  # Test files
+│   └── test_event_model.py # Event model tests
+├── output/                 # Generated images & data
+│   ├── *.png               # Benchmark plots
+│   └── basis_data.npz      # PCA basis data
+└── archive/                # Archived/deprecated code
+```
 
 ## Code Style Guidelines
 - **Python**: 3.10+ required; use modern union syntax (`float | None`, not `Optional[float]`)

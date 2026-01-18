@@ -7,6 +7,9 @@ narrower spike than the Soma, which is critical for accurate synaptic weight
 calculation (Rowan et al., 2016).
 """
 
+import sys
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+
 import numpy as np
 import matplotlib.pyplot as plt
 

@@ -7,6 +7,9 @@ Tests how the EventPropagator handles closely spaced spikes.
    of the second spike once it is allowed through?
 """
 
+import sys
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+
 import matplotlib.pyplot as plt
 import numpy as np
 

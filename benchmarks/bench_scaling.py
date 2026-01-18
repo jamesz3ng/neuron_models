@@ -16,6 +16,9 @@ Models tested:
 import time
 import numpy as np
 
+import sys
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+
 from hh_cable import simulate_hh_cable
 from hh_model import simulate_hh_model
 from fast_model import simulate_fast_model

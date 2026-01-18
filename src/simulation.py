@@ -1,6 +1,6 @@
 
 import numpy as np
-from physics import HHPhysics
+from .physics import HHPhysics
 
 DT_MS = 0.01  # Default Time step (ms)
 STIM_DURATION_MS = 1.0  # Default duration of each stimulus pulse

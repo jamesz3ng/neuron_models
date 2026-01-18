@@ -17,9 +17,9 @@ Target: ~1,100 spikes to ensure robust PCA capturing full AP shape space.
 import numpy as np
 from sklearn.decomposition import PCA
 
-from physics import HHPhysics
-from simulation import run_simulation, create_pulse_train, DT_MS, STIM_AMPLITUDE, STIM_DURATION_MS
-from analysis import find_spike_peaks, extract_aligned_spike
+from .physics import HHPhysics
+from .simulation import run_simulation, create_pulse_train, DT_MS, STIM_AMPLITUDE, STIM_DURATION_MS
+from .analysis import find_spike_peaks, extract_aligned_spike
 
 # =============================================================================
 # Configuration

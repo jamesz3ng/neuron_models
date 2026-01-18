@@ -1,4 +1,7 @@
 
+import sys
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+
 from math import exp as math_exp
 
 import matplotlib.pyplot as plt

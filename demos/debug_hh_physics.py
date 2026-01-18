@@ -8,6 +8,9 @@ Sweeps stimulation frequencies to find the range where:
 Goal: Identify optimal frequency for PCA library generation.
 """
 
+import sys
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+
 import numpy as np
 
 from physics import HHPhysics

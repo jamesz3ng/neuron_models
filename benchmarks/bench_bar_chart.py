@@ -10,6 +10,9 @@ Compares wall-clock time to propagate signals through:
 All models process the same biological load: 1000ms of 50Hz spike activity.
 """
 
+import sys
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+
 import time
 import numpy as np
 
