@@ -8,12 +8,16 @@ Tests how the EventPropagator handles closely spaced spikes.
 """
 
 import sys
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+from pathlib import Path
+
+_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_ROOT))
+_OUTPUT_DIR = _ROOT / "output"
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-from event_model import EventPropagator, _generate_hh_signal
+from src.event_model import EventPropagator, _generate_hh_signal
 
 # =============================================================================
 # Configuration
@@ -123,7 +127,7 @@ def main():
     fig.text(0.02, 0.5, "Voltage (mV)", va="center", rotation="vertical")
     plt.tight_layout(rect=[0.03, 0.03, 1, 0.95])
 
-    output_file = "refractory_test.png"
+    output_file = _OUTPUT_DIR / "refractory_test.png"
     plt.savefig(output_file, dpi=150)
     print(f"\nSaved plot to: {output_file}")
 

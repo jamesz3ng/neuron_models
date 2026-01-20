@@ -1,6 +1,10 @@
 
 import sys
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+from pathlib import Path
+
+_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_ROOT))
+_OUTPUT_DIR = _ROOT / "output"
 
 from math import exp as math_exp
 
@@ -8,9 +12,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Import your models
-from event_model import EventPropagator
-from physics import HHPhysics
-from simulation import DT_MS, run_simulation
+from src.event_model import EventPropagator
+from src.physics import HHPhysics
+from src.simulation import DT_MS, run_simulation
 
 def run_coupled_simulation(
     t_end_ms: float,
@@ -171,8 +175,9 @@ def main():
     axes[-1].set_xlabel("Time (ms)")
 
     plt.tight_layout()
-    plt.savefig("chain_demo_gap.png", dpi=150)
-    print("Saved chain_demo_gap.png")
+    output_file = _OUTPUT_DIR / "chain_demo_gap.png"
+    plt.savefig(output_file, dpi=150)
+    print(f"Saved {output_file}")
 
 
 if __name__ == "__main__":

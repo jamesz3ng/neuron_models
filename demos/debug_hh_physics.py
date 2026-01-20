@@ -9,13 +9,17 @@ Goal: Identify optimal frequency for PCA library generation.
 """
 
 import sys
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+from pathlib import Path
+
+_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_ROOT))
+_OUTPUT_DIR = _ROOT / "output"
 
 import numpy as np
 
-from physics import HHPhysics
-from simulation import run_simulation, create_pulse_train
-from analysis import find_spike_peaks, measure_spike_width, extract_aligned_spike
+from src.physics import HHPhysics
+from src.simulation import run_simulation, create_pulse_train
+from src.analysis import find_spike_peaks, measure_spike_width, extract_aligned_spike
 
 # =============================================================================
 # HH Model & Analysis
@@ -380,7 +384,7 @@ def plot_results(
 def main():
     results, traces, spike_waveforms = run_frequency_sweep()
     print_results_table(results)
-    plot_results(results, traces, spike_waveforms, "hh_stress_test.png")
+    plot_results(results, traces, spike_waveforms, _OUTPUT_DIR / "hh_stress_test.png")
 
     # Recommendation
     print("\n" + "=" * 70)

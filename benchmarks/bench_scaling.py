@@ -17,13 +17,17 @@ import time
 import numpy as np
 
 import sys
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+from pathlib import Path
 
-from hh_cable import simulate_hh_cable
-from hh_model import simulate_hh_model
-from fast_model import simulate_fast_model
-from cable_equation import simulate_cable_equation
-from wave_model import simulate_wave_model
+_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_ROOT))
+_OUTPUT_DIR = _ROOT / "output"
+
+from src.hh_cable import simulate_hh_cable
+from src.hh_model import simulate_hh_model
+from src.fast_model import simulate_fast_model
+from src.cable_equation import simulate_cable_equation
+from src.wave_model import simulate_wave_model
 
 # =============================================================================
 # Configuration
@@ -541,7 +545,7 @@ def main():
     results = _run_scaling_benchmark()
 
     # Plot results
-    _plot_scaling(results, "speed_scaling.png")
+    _plot_scaling(results, _OUTPUT_DIR / "speed_scaling.png")
 
     # Print summary
     _print_summary(results)

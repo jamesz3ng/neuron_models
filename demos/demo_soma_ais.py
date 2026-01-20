@@ -8,13 +8,17 @@ calculation (Rowan et al., 2016).
 """
 
 import sys
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+from pathlib import Path
+
+_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_ROOT))
+_OUTPUT_DIR = _ROOT / "output"
 
 import numpy as np
 import matplotlib.pyplot as plt
 
-from ssds_model import HHPhysics, run_simulation
-from event_model import EventPropagator
+from src.ssds_model import HHPhysics, run_simulation
+from src.event_model import EventPropagator
 
 # Simulation Constants
 DT_MS = 0.01
@@ -39,9 +43,9 @@ def run_2comp_simulation(t_end_ms: float, i_stim_soma: np.ndarray, dt_ms: float 
     g_K_s = 36.0
     g_L = 0.3
     
-    # AIS (High Density - Kole et al 2008)
-    g_Na_a = 400.0  
-    g_K_a = 200.0   
+    # AIS (High Density)
+    g_Na_a = 300
+    g_K_a = 36.0
     
     # Reversal Potentials
     E_Na = 50.0
@@ -69,6 +73,10 @@ def run_2comp_simulation(t_end_ms: float, i_stim_soma: np.ndarray, dt_ms: float 
     # History
     Vs_hist = np.zeros(n_steps)
     Va_hist = np.zeros(n_steps)
+    i_na_s_hist = np.zeros(n_steps)
+    i_k_s_hist = np.zeros(n_steps)
+    i_na_a_hist = np.zeros(n_steps)
+    i_k_a_hist = np.zeros(n_steps)
     
     # Loop
     for i in range(n_steps):
@@ -113,11 +121,14 @@ def run_2comp_simulation(t_end_ms: float, i_stim_soma: np.ndarray, dt_ms: float 
         # Store
         Vs_hist[i] = Vs
         Va_hist[i] = Va
+        i_na_s_hist[i] = I_Na_s
+        i_k_s_hist[i] = I_K_s
+        i_na_a_hist[i] = I_Na_a
+        i_k_a_hist[i] = I_K_a
         
-    return t_ms, Vs_hist, Va_hist
+    return t_ms, Vs_hist, Va_hist, i_na_s_hist, i_k_s_hist, i_na_a_hist, i_k_a_hist
 
 def calculate_metrics(t, V, v_th=-20.0):
-    """Calculate FWHM and Synaptic Drive."""
     # FWHM
     peak_idx = np.argmax(V)
     peak_val = V[peak_idx]
@@ -126,18 +137,18 @@ def calculate_metrics(t, V, v_th=-20.0):
     
     # Find crossings
     crossings = np.where(np.diff(np.sign(V - half_max)))[0]
-    if len(crossings) >= 2:
-        # Take the two closest to peak
-        left = crossings[crossings < peak_idx][-1]
-        right = crossings[crossings > peak_idx][0]
+    
+    # Logic to find crossings relative to peak
+    left_cross = crossings[crossings < peak_idx]
+    right_cross = crossings[crossings > peak_idx]
+    
+    if len(left_cross) > 0 and len(right_cross) > 0:
+        left = left_cross[-1]
+        right = right_cross[0]
         fwhm = t[right] - t[left]
     else:
         fwhm = 0.0
         
-    # Synaptic Drive Integral: sum(max(0, V - Vth)^3) * dt
-    # Use -20mV as approximation for Ca channel activation threshold logic or release
-    # The prompt says: sum(max(0, V - Vth)^3)
-    # Ginebaugh et al often use -25 or -20.
     
     drive_signal = np.maximum(0, V - v_th)**3
     drive_integral = np.sum(drive_signal) * (t[1] - t[0])
@@ -162,7 +173,7 @@ def main():
     i_stim[start_idx:end_idx] = stim_amp
     
     print("Running 2-compartment simulation...")
-    t, Vs, Va = run_2comp_simulation(T_END, i_stim, DT_MS)
+    t, Vs, Va, i_na_s, i_k_s, i_na_a, i_k_a = run_2comp_simulation(T_END, i_stim, DT_MS)
     
     # 2. Metrics
     print("\nMetrics:")
@@ -205,12 +216,6 @@ def main():
     ax1.plot(t, Va, 'b-', linewidth=2, label='AIS (High Density)')
     
     if v_recon is not None:
-        # Align reconstruction if needed:
-        # The Propagator adds a specific delay (default 5ms).
-        # We need to shift it back to overlay exactly, OR we just plot it as is to show propagation.
-        # However, prompt says "how well it reconstructs". Usually implies overlay.
-        # Propagator default delay is 5ms.
-        # Let's check delay from prop object.
         delay = prop.delay_ms
         t_shifted = t + delay
         ax1.plot(t_shifted, v_recon, 'r--', linewidth=1.5, label=f'Event Model Recon (+{delay}ms)')
@@ -221,23 +226,25 @@ def main():
     ax1.grid(True, alpha=0.3)
     ax1.set_xlim(4, 30) # Zoom on spike + reconstruction
     
-    # Plot 2: Synaptic Drive
-    ax2.plot(t, signal_s, 'k--', linewidth=2, label='Soma Drive (V-Vth)^3')
-    ax2.fill_between(t, signal_s, color='black', alpha=0.1)
+    # Plot 2: Ionic Currents (AIS)
+    ax2.plot(t, i_na_a, 'r-', linewidth=1.5, label='AIS $I_{Na}$')
+    ax2.plot(t, i_k_a, 'g-', linewidth=1.5, label='AIS $I_{K}$')
     
-    ax2.plot(t, signal_a, 'b-', linewidth=2, label='AIS Drive (V-Vth)^3')
-    ax2.fill_between(t, signal_a, color='blue', alpha=0.2)
+    # Optional: Plot Soma currents as dashed lines for comparison
+    ax2.plot(t, i_na_s, 'r--', linewidth=1, alpha=0.5, label='Soma $I_{Na}$')
+    ax2.plot(t, i_k_s, 'g--', linewidth=1, alpha=0.5, label='Soma $I_{K}$')
     
-    ax2.set_title('Synaptic Drive Function (Calcium Influx Proxy)')
+    ax2.set_title('Ionic Currents (Sodium & Potassium)')
     ax2.set_xlabel('Time (ms)')
-    ax2.set_ylabel('Drive Strength (a.u.)')
+    ax2.set_ylabel(r'Current Density ($\mu$A/cm²)')
     ax2.legend()
     ax2.grid(True, alpha=0.3)
-    ax2.set_xlim(4, 12)
+    ax2.set_xlim(4, 15)
     
     plt.tight_layout()
-    plt.savefig('soma_ais_validation.png')
-    print("\nSaved plot to soma_ais_validation.png")
+    output_file = _OUTPUT_DIR / "soma_ais_validation.png"
+    plt.savefig(output_file)
+    print(f"\nSaved plot to {output_file}")
 
 if __name__ == "__main__":
     main()

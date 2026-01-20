@@ -14,12 +14,16 @@ Protocols:
 Target: ~1,100 spikes to ensure robust PCA capturing full AP shape space.
 """
 
+from pathlib import Path
+
 import numpy as np
 from sklearn.decomposition import PCA
 
 from .physics import HHPhysics
 from .simulation import run_simulation, create_pulse_train, DT_MS, STIM_AMPLITUDE, STIM_DURATION_MS
 from .analysis import find_spike_peaks, extract_aligned_spike
+
+_OUTPUT_DIR = Path(__file__).parent.parent / "output"
 
 # =============================================================================
 # Configuration
@@ -822,7 +826,7 @@ def main():
     print("VISUALIZATION")
     print("-" * 70)
 
-    plot_results(all_spikes, pca_result, "spike_pca_analysis.png")
+    plot_results(all_spikes, pca_result, _OUTPUT_DIR / "spike_pca_analysis.png")
 
     # Validation
     print("-" * 70)
@@ -849,7 +853,7 @@ def main():
         f"  All spikes 99th percentile: {summary['all_spikes_percentile_99_rmse_2pc']:.3f} mV"
     )
 
-    plot_validation(all_spikes, pca_result, validation, "spike_validation.png")
+    plot_validation(all_spikes, pca_result, validation, _OUTPUT_DIR / "spike_validation.png")
 
     # Summary
     print("\n" + "=" * 70)
@@ -872,7 +876,7 @@ def main():
     components_3 = pca_result["components"][:3]
     explained_variance_3 = pca_result["explained_variance_ratio"][:3]
 
-    output_file = "basis_data.npz"
+    output_file = _OUTPUT_DIR / "basis_data.npz"
     np.savez(
         output_file,
         mean_waveform=pca_result["mean"],

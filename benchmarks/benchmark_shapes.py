@@ -17,12 +17,16 @@ NOTE: hh_model.py has a diffusion coefficient bug that prevents proper AP propag
 import numpy as np
 
 import sys
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+from pathlib import Path
 
-from hh_cable import simulate_hh_cable
-from hh_model import simulate_hh_model
-from fast_model import simulate_fast_model
-from wave_model import simulate_wave_model
+_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_ROOT))
+_OUTPUT_DIR = _ROOT / "output"
+
+from src.hh_cable import simulate_hh_cable
+from src.hh_model import simulate_hh_model
+from src.fast_model import simulate_fast_model
+from src.wave_model import simulate_wave_model
 
 # =============================================================================
 # Configuration (hardcoded defaults)
@@ -606,7 +610,7 @@ def main():
     _print_metrics_table(metrics)
 
     # Plot comparison
-    _plot_comparison(aligned_traces, "ap_comparison_overlay.png")
+    _plot_comparison(aligned_traces, _OUTPUT_DIR / "ap_comparison_overlay.png")
 
 
 if __name__ == "__main__":

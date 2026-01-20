@@ -1,4 +1,8 @@
+from pathlib import Path
+
 import numpy as np
+
+_OUTPUT_DIR = Path(__file__).parent.parent / "output"
 
 # https://goldmanlab.faculty.ucdavis.edu/wp-content/uploads/sites/263/2016/07/HodgkinHuxley.pdf
 # values taken from above converted to SI units
@@ -433,7 +437,7 @@ def main():
     ax3.grid(True)
 
     plt.tight_layout()
-    plt.savefig("hh_cable_model.png", dpi=150)
+    plt.savefig(_OUTPUT_DIR / "hh_cable_model.png", dpi=150)
     plt.show()
 
 

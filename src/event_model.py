@@ -8,8 +8,13 @@ Simulates axonal propagation by:
 4. Reconstructing waveforms at destination
 """
 
+from pathlib import Path
+
 import numpy as np
 from scipy.interpolate import interp1d
+
+# Default basis file path relative to this module
+_DEFAULT_BASIS_FILE = Path(__file__).parent.parent / "output" / "basis_data.npz"
 
 # =============================================================================
 # Core Model Class (The Novel Part)
@@ -24,10 +29,12 @@ class EventPropagator:
 
     def __init__(
         self,
-        basis_file: str = "basis_data.npz",
+        basis_file: str | Path | None = None,
         delay_ms: float = 5.0,
         v_rest: float = -65.0,
     ):
+        if basis_file is None:
+            basis_file = _DEFAULT_BASIS_FILE
         # Load basis data
         data = np.load(basis_file)
         self.mean_waveform = data["mean_waveform"]
@@ -167,7 +174,7 @@ def _generate_hh_signal(
     Unified generator for all test protocols.
     Uses run_simulation from ssds_model for HH physics.
     """
-    from simulation import run_simulation, DT_MS
+    from src.simulation import run_simulation, DT_MS
 
     # Stimulus setup
     isi_ms = 1000.0 / freq_hz

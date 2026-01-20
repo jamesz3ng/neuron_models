@@ -1,10 +1,10 @@
 import sys
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent))
 
 import numpy as np
 
-import ssds_model
-from ssds_model import _simulate_and_harvest
+from src import ssds_model
+from src.ssds_model import _simulate_and_harvest
 
 # Fix Amplitude to the one that worked best
 ssds_model.STIM_AMPLITUDE = 30.0

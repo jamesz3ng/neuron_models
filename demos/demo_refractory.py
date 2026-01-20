@@ -1,9 +1,13 @@
 import sys
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+from pathlib import Path
+
+_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_ROOT))
+_OUTPUT_DIR = _ROOT / "output"
 
 import numpy as np
 
-from fast_model import simulate_fast_model
+from src.fast_model import simulate_fast_model
 
 
 def _generate_spike_train(
@@ -123,8 +127,9 @@ def main():
         ax2.text(t_spike + delay_ms, 40, label, ha="center", fontsize=8, color=color)
 
     plt.tight_layout()
-    plt.savefig("refractory_demo.png", dpi=150)
-    print(f"\nSaved plot to: refractory_demo.png")
+    output_file = _OUTPUT_DIR / "refractory_demo.png"
+    plt.savefig(output_file, dpi=150)
+    print(f"\nSaved plot to: {output_file}")
     plt.close(fig)
 
 

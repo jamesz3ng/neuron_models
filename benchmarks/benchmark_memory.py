@@ -21,10 +21,9 @@ import time
 import sys
 import numpy as np
 
-import sys
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent))
 
-from fast_model import simulate_fast_model
+from src.fast_model import simulate_fast_model
 
 
 # =============================================================================

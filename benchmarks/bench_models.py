@@ -3,7 +3,7 @@ import statistics
 import sys
 import time
 
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent))
 
 
 def _time_call(fn, *, warmup: int, repeats: int):
@@ -75,12 +75,12 @@ def main():
     if args.model == "common":
         T_s = 1.0 if args.T is None else args.T
 
-        from hh_cable import _default_params as _hh_cable_defaults
-        from hh_cable import simulate_hh_cable
-        from hh_model import _default_params as _hh_model_defaults
-        from hh_model import simulate_hh_model
-        from wave_model import _default_params as _wave_defaults
-        from wave_model import simulate_wave_model
+        from src.hh_cable import _default_params as _hh_cable_defaults
+        from src.hh_cable import simulate_hh_cable
+        from src.hh_model import _default_params as _hh_model_defaults
+        from src.hh_model import simulate_hh_model
+        from src.wave_model import _default_params as _wave_defaults
+        from src.wave_model import simulate_wave_model
 
         # hh_model: use default dt unless forced
         hh_model_dt_s = args.dt if args.dt is not None else _hh_model_defaults()["dt_s"]
@@ -167,7 +167,7 @@ def main():
         return
 
     if args.model == "hh_cable":
-        from hh_cable import simulate_hh_cable
+        from src.hh_cable import simulate_hh_cable
 
         L = args.n_x * args.dx
 
@@ -186,7 +186,7 @@ def main():
         sim_T_s = meta["T_s"]
         dt_s = meta["dt_s"]
     elif args.model == "hh_model":
-        from hh_model import simulate_hh_model
+        from src.hh_model import simulate_hh_model
 
         def run_once():
             return simulate_hh_model(
@@ -202,7 +202,7 @@ def main():
         sim_T_s = meta["T_s"]
         dt_s = meta["dt_s"]
     elif args.model == "wave_model":
-        from wave_model import simulate_wave_model
+        from src.wave_model import simulate_wave_model
 
         def run_once():
             return simulate_wave_model(

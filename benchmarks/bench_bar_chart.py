@@ -11,7 +11,11 @@ All models process the same biological load: 1000ms of 50Hz spike activity.
 """
 
 import sys
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent / 'src'))
+from pathlib import Path
+
+_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(_ROOT))
+_OUTPUT_DIR = _ROOT / "output"
 
 import time
 import numpy as np
@@ -118,7 +122,7 @@ def benchmark_hh_cable(n_iterations: int = 10) -> float:
     Config: L=5000μm, dx=50μm (100 compartments), dt=0.01ms, T=1000ms
     Uses internal stimulus to generate 50Hz pattern.
     """
-    from hh_cable import simulate_hh_cable
+    from src.hh_cable import simulate_hh_cable
     
     # Parameters for 50Hz stimulus (20ms ISI = 50 pulses in 1000ms)
     # HH cable uses seconds for time
@@ -154,7 +158,7 @@ def benchmark_passive_cable(v_source: np.ndarray, t_ms: np.ndarray, n_iterations
     
     Config: L=5000μm, dx=50μm (100 compartments), dt=0.01ms
     """
-    from cable_equation import simulate_cable_equation
+    from src.cable_equation import simulate_cable_equation
     
     T_ms = t_ms[-1]
     dt_ms = t_ms[1] - t_ms[0]
@@ -187,7 +191,7 @@ def benchmark_fast_model(v_source: np.ndarray, t_ms: np.ndarray, n_iterations: i
     
     Propagation time for 5000μm at 100μm/ms = 50ms delay.
     """
-    from fast_model import simulate_fast_model
+    from src.fast_model import simulate_fast_model
     
     # Delay for 5000μm axon at typical conduction velocity
     delay_ms = 50.0  # 5000μm / 100 μm/ms
@@ -215,7 +219,7 @@ def benchmark_event_model(v_source: np.ndarray, t_ms: np.ndarray, n_iterations: 
     
     Includes: spike detection → encoding → queueing → decoding.
     """
-    from event_model import EventPropagator
+    from src.event_model import EventPropagator
     
     # Same delay as fast model
     delay_ms = 50.0
@@ -390,8 +394,9 @@ def main():
     ax.set_ylim(y_min, y_max)
     
     plt.tight_layout()
-    plt.savefig("speed_benchmark_bar.png", dpi=150, bbox_inches="tight")
-    print(f"\nPlot saved: speed_benchmark_bar.png")
+    output_file = _OUTPUT_DIR / "speed_benchmark_bar.png"
+    plt.savefig(output_file, dpi=150, bbox_inches="tight")
+    print(f"\nPlot saved: {output_file}")
     plt.close()
     
     # Summary
