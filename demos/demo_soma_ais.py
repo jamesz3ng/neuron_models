@@ -17,116 +17,14 @@ _OUTPUT_DIR = _ROOT / "output"
 import numpy as np
 import matplotlib.pyplot as plt
 
-from src.ssds_model import HHPhysics, run_simulation
+from src.ssds_model import HHPhysics
+from src.ais_simulation import run_2comp_simulation
 from src.event_model import EventPropagator
 
 # Simulation Constants
-DT_MS = 0.01
+DT_MS = 0.002
 
-def run_2comp_simulation(t_end_ms: float, i_stim_soma: np.ndarray, dt_ms: float = 0.01):
-    """
-    Run a 2-compartment simulation (Soma + AIS).
-    
-    Physics:
-      Soma: Standard HH (gNa=120, gK=36)
-      AIS:  High Density (gNa=600, gK=100)
-    
-    Coupling:
-      Ohms law axial current between compartments.
-    """
-    n_steps = len(i_stim_soma)
-    t_ms = np.arange(n_steps) * dt_ms
-    
-    # --- Parameters ---
-    # Soma (Standard)
-    g_Na_s = 120.0
-    g_K_s = 36.0
-    g_L = 0.3
-    
-    # AIS (High Density)
-    g_Na_a = 300
-    g_K_a = 36.0
-    
-    # Reversal Potentials
-    E_Na = 50.0
-    E_K = -77.0
-    E_L = -54.387
-    
-    # Coupling
-    g_couple = 2.0  # mS/cm2
-    C_m = 1.0       # uF/cm2
-    
-    # --- Initialization ---
-    v_rest = -65.0
-    Vs = v_rest
-    Va = v_rest
-    
-    # Steady state gates
-    m, h, n = HHPhysics.steady_state(v_rest)
-    
-    # State vectors (Soma and AIS start same)
-    # Soma gates
-    ms, hs, ns = m, h, n
-    # AIS gates
-    ma, ha, na = m, h, n
-    
-    # History
-    Vs_hist = np.zeros(n_steps)
-    Va_hist = np.zeros(n_steps)
-    i_na_s_hist = np.zeros(n_steps)
-    i_k_s_hist = np.zeros(n_steps)
-    i_na_a_hist = np.zeros(n_steps)
-    i_k_a_hist = np.zeros(n_steps)
-    
-    # Loop
-    for i in range(n_steps):
-        # 1. Calculate Currents
-        # Soma
-        I_Na_s = g_Na_s * (ms**3) * hs * (Vs - E_Na)
-        I_K_s  = g_K_s  * (ns**4) * (Vs - E_K)
-        I_L_s  = g_L    * (Vs - E_L)
-        
-        # AIS
-        I_Na_a = g_Na_a * (ma**3) * ha * (Va - E_Na)
-        I_K_a  = g_K_a  * (na**4) * (Va - E_K)
-        I_L_a  = g_L    * (Va - E_L)
-        
-        # Axial Currents
-        # Current flowing INTO Soma FROM AIS
-        I_axial_s = g_couple * (Va - Vs)
-        # Current flowing INTO AIS FROM Soma
-        I_axial_a = g_couple * (Vs - Va)
-        
-        # 2. Update Voltages
-        # Note: Stimulus applied only to Soma
-        dVs = (i_stim_soma[i] - I_Na_s - I_K_s - I_L_s + I_axial_s) / C_m
-        dVa = (0.0            - I_Na_a - I_K_a - I_L_a + I_axial_a) / C_m
-        
-        Vs += dVs * dt_ms
-        Va += dVa * dt_ms
-        
-        # 3. Update Gates
-        # Soma
-        am, bm, ah, bh, an, bn = HHPhysics.rates(Vs)
-        ms += (am * (1 - ms) - bm * ms) * dt_ms
-        hs += (ah * (1 - hs) - bh * hs) * dt_ms
-        ns += (an * (1 - ns) - bn * ns) * dt_ms
-        
-        # AIS
-        am, bm, ah, bh, an, bn = HHPhysics.rates(Va)
-        ma += (am * (1 - ma) - bm * ma) * dt_ms
-        ha += (ah * (1 - ha) - bh * ha) * dt_ms
-        na += (an * (1 - na) - bn * na) * dt_ms
-        
-        # Store
-        Vs_hist[i] = Vs
-        Va_hist[i] = Va
-        i_na_s_hist[i] = I_Na_s
-        i_k_s_hist[i] = I_K_s
-        i_na_a_hist[i] = I_Na_a
-        i_k_a_hist[i] = I_K_a
-        
-    return t_ms, Vs_hist, Va_hist, i_na_s_hist, i_k_s_hist, i_na_a_hist, i_k_a_hist
+
 
 def calculate_metrics(t, V, v_th=-20.0):
     # FWHM
@@ -164,7 +62,7 @@ def main():
     T_END = 20.0
     stim_start = 5.0
     stim_dur = 1.0
-    stim_amp = 30.0
+    stim_amp = 100.0
     
     n_pts = int(T_END / DT_MS)
     i_stim = np.zeros(n_pts)
@@ -181,6 +79,9 @@ def main():
     
     fwhm_s, drive_s, signal_s = calculate_metrics(t, Vs)
     fwhm_a, drive_a, signal_a = calculate_metrics(t, Va)
+    
+    print(f"Soma Peak: {np.max(Vs):.2f} mV")
+    print(f"AIS  Peak: {np.max(Va):.2f} mV")
     
     print(f"Soma FWHM:  {fwhm_s:.3f} ms")
     print(f"AIS  FWHM:  {fwhm_a:.3f} ms")
@@ -218,8 +119,7 @@ def main():
     if v_recon is not None:
         delay = prop.delay_ms
         t_shifted = t + delay
-        ax1.plot(t_shifted, v_recon, 'r--', linewidth=1.5, label=f'Event Model Recon (+{delay}ms)')
-        
+        ax1.plot(t, v_recon, 'r--', linewidth=1.5, label=f'Event Model Output')        
     ax1.set_title('Action Potential Source Generation & Event Encoding')
     ax1.set_ylabel('Voltage (mV)')
     ax1.legend()

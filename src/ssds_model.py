@@ -20,7 +20,9 @@ import numpy as np
 from sklearn.decomposition import PCA
 
 from .physics import HHPhysics
-from .simulation import run_simulation, create_pulse_train, DT_MS, STIM_AMPLITUDE, STIM_DURATION_MS
+from .physics import HHPhysics
+from .simulation import create_pulse_train, DT_MS, STIM_AMPLITUDE, STIM_DURATION_MS
+from .ais_simulation import run_2comp_simulation
 from .analysis import find_spike_peaks, extract_aligned_spike
 
 _OUTPUT_DIR = Path(__file__).parent.parent / "output"
@@ -30,8 +32,8 @@ _OUTPUT_DIR = Path(__file__).parent.parent / "output"
 # =============================================================================
 
 # Spike extraction parameters
-WINDOW_PRE_MS = 2.0  # ms before peak
-WINDOW_POST_MS = 15  # ms after peak (increased for full AHP capture)
+WINDOW_PRE_MS = 5.0  # ms before peak (AIS rise is fast)
+WINDOW_POST_MS = 10.0   # ms after peak (AIS repolarization is fast)
 WINDOW_TOTAL_MS = WINDOW_PRE_MS + WINDOW_POST_MS
 WINDOW_POINTS = int(WINDOW_TOTAL_MS / DT_MS)
 PRE_PEAK_POINTS = int(WINDOW_PRE_MS / DT_MS)
@@ -47,12 +49,16 @@ SPIKE_THRESHOLD_MV = -20.0
 def _simulate_and_harvest(
     pulse_times_ms: list[float],
     *,
-    g_na_scale: float = 1.0,
-    g_k_scale: float = 1.0,
     v_init: float | None = None,
     gates_init: tuple[float, float, float] | None = None,
     metadata: dict | None = None,
     extract_indices: list[int] | None = None,
+    # 2-Compartment Scaling (defaults)
+    g_na_s_scale: float = 1.0, 
+    g_k_s_scale: float = 1.0,
+    g_na_a_scale: float = 1.0, 
+    g_k_a_scale: float = 1.0,
+    g_couple_scale: float = 1.0,
 ) -> list[dict]:
     """
     Run simulation and extract spike waveforms.
@@ -61,16 +67,16 @@ def _simulate_and_harvest(
     ----------
     pulse_times_ms : list[float]
         Times of stimulus pulses.
-    g_na_scale, g_k_scale : float
-        Conductance scaling factors.
     v_init : float | None
-        Initial voltage (uses steady-state gates if gates_init is None).
+        Initial voltage.
     gates_init : tuple[float, float, float] | None
-        Initial (m, h, n) gate values.
+        Initial gate values.
     metadata : dict | None
-        Additional metadata to attach to each spike.
+        Metadata for spikes.
     extract_indices : list[int] | None
-        Which spike indices to extract (None = all).
+        Indices to extract.
+    g_*_scale : float
+        Scaling factors for 2-compartment model.
 
     Returns
     -------
@@ -81,18 +87,24 @@ def _simulate_and_harvest(
     t_end_ms = pulse_times_ms[-1] + WINDOW_POST_MS + 5.0
 
     # Create stimulus and run simulation
+    # Create stimulus and run simulation
     i_stim = create_pulse_train(t_end_ms, pulse_times_ms)
-    t_ms, V = run_simulation(
+    
+    # Run 2-Compartment Model
+    # We ignore the Soma trace (Vs) and currents, targeting the AIS trace (Va)
+    _, _, Va, _, _, _, _ = run_2comp_simulation(
         t_end_ms,
         i_stim,
-        g_na_scale=g_na_scale,
-        g_k_scale=g_k_scale,
-        v_init=v_init,
-        gates_init=gates_init,
+        dt_ms=DT_MS,
+        g_na_s_scale=g_na_s_scale,
+        g_k_s_scale=g_k_s_scale,
+        g_na_a_scale=g_na_a_scale,
+        g_k_a_scale=g_k_a_scale,
+        g_couple_scale=g_couple_scale
     )
 
-    # Find peaks
-    peaks = find_spike_peaks(V)
+    # Find peaks on the AIS trace
+    peaks = find_spike_peaks(Va)
 
     # Determine which spikes to extract
     if extract_indices is None:
@@ -104,7 +116,7 @@ def _simulate_and_harvest(
     spikes = []
     for i in indices_to_extract:
         peak_idx = peaks[i]
-        waveform = extract_aligned_spike(V, peak_idx, PRE_PEAK_POINTS, POST_PEAK_POINTS)
+        waveform = extract_aligned_spike(Va, peak_idx, PRE_PEAK_POINTS, POST_PEAK_POINTS)
         if waveform is not None:
             spike_data = {
                 "waveform": waveform,
@@ -127,7 +139,7 @@ def generate_protocol_a() -> list[dict]:
     # 90hz ~ 7% diff
     # 100hz ~ 18% diff
 
-    frequencies_hz = [60]
+    frequencies_hz = [70]
     print(f"Protocol A: Fatigue Spectrum (10 pulses at {frequencies_hz} Hz)...")
 
     all_spikes = []
@@ -188,13 +200,13 @@ def generate_protocol_c(n_samples: int = 1000, seed: int = 42) -> list[dict]:
     spikes = []
 
     for _ in range(n_samples):
-        g_na_scale = np.random.uniform(0.5, 2)
-        g_k_scale = np.random.uniform(0.5, 2)
+        g_na_scale = np.random.uniform(0.85, 1.15)
+        g_k_scale = np.random.uniform(0.85, 1.15)
 
         result = _simulate_and_harvest(
             [5.0],  # Single pulse
-            g_na_scale=g_na_scale,
-            g_k_scale=g_k_scale,
+            g_na_a_scale=g_na_scale, # Tune AIS density
+            g_k_a_scale=g_k_scale,   # Tune AIS density
             metadata={
                 "protocol": "C_population",
                 "g_na_scale": g_na_scale,
@@ -251,13 +263,25 @@ def generate_protocol_d(n_samples: int = 50) -> list[dict]:
     print(f"  Total extracted: {len(spikes)} super-charged spikes")
     return spikes
 
-
 # PCA Analysis (unchanged)
 
 
 def run_pca_analysis(spikes: list[dict], n_components: int = 3) -> dict:
     """Run PCA on spike waveforms."""
+    # Stack waveforms
     X = np.vstack([s["waveform"] for s in spikes])
+    
+    # Filter out NaNs/Infs
+    valid_mask = np.all(np.isfinite(X), axis=1)
+    n_total = len(spikes)
+    n_valid = np.sum(valid_mask)
+    
+    if n_valid < n_total:
+        print(f"WARNING: Dropping {n_total - n_valid} invalid spikes (NaN/Inf) from PCA.")
+        X = X[valid_mask]
+        # Also limit spikes list to valid ones (though difficult as we only have X here)
+        # For basis generation, X is what matters.
+    
     print(f"\nPCA Analysis: {X.shape[0]} spikes, {X.shape[1]} time points")
 
     pca = PCA(n_components=n_components)

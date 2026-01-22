@@ -9,8 +9,8 @@ class HHPhysics:
 
     # Membrane capacitance and conductances
     C_m = 1.0  # μF/cm²
-    g_Na = 120.0  # mS/cm²
-    g_K = 36.0
+    g_Na = 120.0  # mS/cm² (Standard HH)
+    g_K = 36.0    # (Standard HH)
     g_L = 0.3
     
     # Reversal potentials (mV)
@@ -74,3 +74,24 @@ class HHPhysics:
         n_inf = alpha_n / (alpha_n + beta_n)
 
         return m_inf, h_inf, n_inf
+    
+    @staticmethod
+    def get_gate_kinetics(V: float) -> tuple[float, float, float, float, float, float]:
+        """
+        Compute steady-state values and time constants at voltage V.
+        
+        Returns (m_inf, tau_m, h_inf, tau_h, n_inf, tau_n).
+        tau values calculation includes 1e-9 epsilon to avoid division by zero.
+        """
+        alpha_m, beta_m, alpha_h, beta_h, alpha_n, beta_n = HHPhysics.rates(V)
+        
+        tau_m = 1.0 / (alpha_m + beta_m + 1e-9)
+        m_inf = alpha_m / (alpha_m + beta_m + 1e-9)
+        
+        tau_h = 1.0 / (alpha_h + beta_h + 1e-9)
+        h_inf = alpha_h / (alpha_h + beta_h + 1e-9)
+        
+        tau_n = 1.0 / (alpha_n + beta_n + 1e-9)
+        n_inf = alpha_n / (alpha_n + beta_n + 1e-9)
+        
+        return m_inf, tau_m, h_inf, tau_h, n_inf, tau_n
