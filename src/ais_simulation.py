@@ -13,7 +13,7 @@ def run_2comp_simulation(
     g_k_a_scale: float = 1.0,
     g_couple_scale: float = 1.0,
     # Kinetic Scaling
-    tau_m_scale_ais: float = 0.8, 
+    tau_m_scale_ais: float = 0.3, 
     tau_h_scale_ais: float = 1.0, 
     tau_n_scale_ais: float = 0.5
 ):

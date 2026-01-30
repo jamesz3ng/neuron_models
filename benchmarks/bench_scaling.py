@@ -2,12 +2,11 @@
 Neuron Scaling Benchmark
 
 Measures simulation time as we scale the number of neurons (N).
-Demonstrates that Fast Model and Wave Model are orders of magnitude faster than HH Cable.
+Demonstrates that Soma-AIS Model and Wave Model are orders of magnitude faster than HH Cable.
 
 Models tested:
 - hh_cable: Full Hodgkin-Huxley cable equation (physics baseline)
-- fast: Pre-generated HH waveform + delay-line propagation
-- hybrid_fast: Fresh HH generation + delay-line propagation (realistic cost)
+- soma_ais: 2-compartment Soma-AIS model (biophysically accurate)
 - cable: Pre-generated HH waveform + passive cable propagation
 - wave: Pre-generated HH waveform + 1D wave equation propagation
 - hybrid_wave: Fresh HH generation + 1D wave equation propagation
@@ -25,7 +24,9 @@ _OUTPUT_DIR = _ROOT / "output"
 
 from src.hh_cable import simulate_hh_cable
 from src.hh_model import simulate_hh_model
+from src.ais_simulation import run_2comp_simulation
 from src.fast_model import simulate_fast_model
+from src.simulation import create_pulse_train, DT_MS
 from src.cable_equation import simulate_cable_equation
 from src.wave_model import simulate_wave_model
 
@@ -71,8 +72,9 @@ CABLE_PARAMS = {
     "store_history": False,
 }
 
-# Fast model parameters
-FAST_MODEL_DELAY_MS = 10.0  # Fixed delay
+# Soma-AIS model parameters
+SOMA_AIS_T_END_MS = T_MS
+SOMA_AIS_DT_MS = DT_MS  # Use simulation module's dt
 
 # Wave model parameters
 L_UM = 5000.0  # Original cable length in μm (same as HH cable)
@@ -82,19 +84,19 @@ CONDUCTION_VELOCITY = 100.0  # μm/ms
 WAVE_MODEL_NX = 200  # Spatial grid points for wave model
 
 # Scaling test parameters
-N_COUNTS = [1, 10, 50, 100, 500, 1000, 5000, 10000]
+N_COUNTS = [1, 10, 50, 100, 500, 1000, 5000]
 TIMEOUT_SECONDS = 5.0  # Skip larger N if previous took longer than this
 
 
 # =============================================================================
-# Pre-generate standard HH waveform (for fast and cable models)
+# Pre-generate standard HH waveform (for cable and wave models)
 # =============================================================================
 
 
 def _generate_hh_waveform() -> tuple[np.ndarray, np.ndarray]:
     """
     Generate a standard HH waveform using simulate_hh_model.
-    Used as input for 'fast' and 'cable' models.
+    Used as input for 'cable' and 'wave' models.
     """
     result = simulate_hh_model(
         T_s=T_S,
@@ -123,45 +125,38 @@ def _time_hh_cable(n_neurons: int) -> float:
     return elapsed
 
 
-def _time_fast_model(
-    n_neurons: int, t_ms_input: np.ndarray, v_input: np.ndarray
-) -> float:
+def _time_soma_ais(n_neurons: int) -> float:
     """
-    Time running fast_model simulation for N neurons sequentially.
-    Uses pre-generated waveform.
+    Time running Soma-AIS + delay-line propagation for N neurons sequentially.
+
+    Includes: 2-compartment spike generation + delay-line propagation.
     """
+    # Create a single pulse stimulus
+    pulse_times = [5.0]
+    i_stim = create_pulse_train(SOMA_AIS_T_END_MS, pulse_times)
+
+    # Delay for propagation (match HH cable length)
+    delay_ms = 50.0  # 5000μm / 100 μm/ms
+
+    # Pre-create time array for fast_model
+    n_steps = len(i_stim)
+    t_ms = np.arange(n_steps) * SOMA_AIS_DT_MS
+
     start = time.perf_counter()
     for _ in range(n_neurons):
-        simulate_fast_model(
-            v_input=v_input,
-            t_ms_input=t_ms_input,
-            delay_ms=FAST_MODEL_DELAY_MS,
+        # Step 1: Soma-AIS spike generation
+        _, _, Va, _, _, _, _ = run_2comp_simulation(
+            t_end_ms=SOMA_AIS_T_END_MS,
+            i_stim_soma=i_stim,
+            dt_ms=SOMA_AIS_DT_MS,
         )
-    elapsed = time.perf_counter() - start
-    return elapsed
 
-
-def _time_hybrid_fast(n_neurons: int) -> float:
-    """
-    Time running hybrid model for N neurons sequentially.
-    Each iteration: fresh HH generation + fast_model delay.
-    """
-    start = time.perf_counter()
-    for _ in range(n_neurons):
-        # Step A: Generate fresh waveform with HH model
-        result = simulate_hh_model(
-            T_s=T_S,
-            **HH_MODEL_PARAMS,
-        )
-        t_s = result["t_s"]
-        V = result["V"][:, 0]
-        t_ms = t_s * 1e3
-
-        # Step B: Propagate with fast_model
+        # Step 2: Delay-line propagation
         simulate_fast_model(
-            v_input=V,
+            v_input=Va,
             t_ms_input=t_ms,
-            delay_ms=FAST_MODEL_DELAY_MS,
+            delay_ms=delay_ms,
+            refractory_period_ms=5.0,
         )
     elapsed = time.perf_counter() - start
     return elapsed
@@ -263,15 +258,14 @@ def _run_scaling_benchmark() -> dict:
 
     Returns dict mapping model_name -> list of (n, time) tuples
     """
-    # Pre-generate standard HH waveform for fast, cable, and wave models
-    print("Generating standard HH waveform for 'fast', 'cable', and 'wave' models...")
+    # Pre-generate standard HH waveform for cable and wave models
+    print("Generating standard HH waveform for 'cable' and 'wave' models...")
     t_ms_input, v_input = _generate_hh_waveform()
     print(f"  Waveform: {len(v_input)} points, {t_ms_input[-1]:.1f} ms")
 
     results = {
         "hh_cable": [],
-        "fast": [],
-        "hybrid_fast": [],
+        "soma_ais": [],
         "cable": [],
         "wave": [],
         "hybrid_wave": [],
@@ -280,18 +274,17 @@ def _run_scaling_benchmark() -> dict:
     # Track if we should skip due to timeout
     skip = {
         "hh_cable": False,
-        "fast": False,
-        "hybrid_fast": False,
+        "soma_ais": False,
         "cable": False,
         "wave": False,
         "hybrid_wave": False,
     }
 
     print(f"\nScaling Benchmark: T = {T_MS} ms, timeout = {TIMEOUT_SECONDS}s")
-    print("=" * 120)
-    header = f"{'N':>6}  {'HH Cable':>12}  {'Fast':>12}  {'Hybrid':>12}  {'Cable':>12}  {'Wave':>12}  {'Hyb-Wave':>12}"
+    print("=" * 100)
+    header = f"{'N':>6}  {'HH Cable':>12}  {'Soma-AIS':>12}  {'Cable':>12}  {'Wave':>12}  {'Hyb-Wave':>12}"
     print(header)
-    print("-" * 120)
+    print("-" * 100)
 
     for n in N_COUNTS:
         row = f"{n:>6}  "
@@ -308,25 +301,14 @@ def _run_scaling_benchmark() -> dict:
         else:
             row += f"{'skip':>12}  "
 
-        # Fast (pre-generated waveform + delay)
-        if not skip["fast"]:
-            t = _time_fast_model(n, t_ms_input, v_input)
-            results["fast"].append((n, t))
-            times["fast"] = t
-            row += f"{t:>12.6f}  "
-            if t > TIMEOUT_SECONDS:
-                skip["fast"] = True
-        else:
-            row += f"{'skip':>12}  "
-
-        # Hybrid Fast (fresh HH generation + delay)
-        if not skip["hybrid_fast"]:
-            t = _time_hybrid_fast(n)
-            results["hybrid_fast"].append((n, t))
-            times["hybrid_fast"] = t
+        # Soma-AIS (2-compartment model)
+        if not skip["soma_ais"]:
+            t = _time_soma_ais(n)
+            results["soma_ais"].append((n, t))
+            times["soma_ais"] = t
             row += f"{t:>12.4f}  "
             if t > TIMEOUT_SECONDS:
-                skip["hybrid_fast"] = True
+                skip["soma_ais"] = True
         else:
             row += f"{'skip':>12}  "
 
@@ -365,7 +347,7 @@ def _run_scaling_benchmark() -> dict:
 
         print(row, flush=True)
 
-    print("=" * 120)
+    print("=" * 100)
 
     return results
 
@@ -379,47 +361,43 @@ def _plot_scaling(results: dict, output_path: str):
     """Create log-log scaling plot."""
     import matplotlib.pyplot as plt
 
+    # Use Inter font for all text
+    plt.rcParams["font.family"] = "Inter"
+
     fig, ax = plt.subplots(figsize=(12, 8))
 
-    # Plot styling
+    # Plot styling (Seaborn deep palette)
     styles = {
         "hh_cable": {
-            "color": "black",
+            "color": "#1a1a1a",
             "marker": "o",
             "markersize": 8,
             "linewidth": 2,
             "label": "HH Cable (full physics)",
         },
-        "fast": {
-            "color": "red",
+        "soma_ais": {
+            "color": "#c44e52",
             "marker": "s",
             "markersize": 8,
             "linewidth": 2,
-            "label": "Fast (pre-gen + delay)",
-        },
-        "hybrid_fast": {
-            "color": "blue",
-            "marker": "^",
-            "markersize": 8,
-            "linewidth": 2,
-            "label": "Hybrid Fast (HH gen + delay)",
+            "label": "Soma-AIS (2-compartment)",
         },
         "cable": {
-            "color": "green",
+            "color": "#55a868",
             "marker": "d",
             "markersize": 8,
             "linewidth": 2,
             "label": "Cable (pre-gen + passive)",
         },
         "wave": {
-            "color": "purple",
+            "color": "#8172b3",
             "marker": "v",
             "markersize": 8,
             "linewidth": 2,
             "label": "Wave (pre-gen + wave eq.)",
         },
         "hybrid_wave": {
-            "color": "orange",
+            "color": "#4c72b0",
             "marker": "p",
             "markersize": 8,
             "linewidth": 2,
@@ -481,7 +459,7 @@ def _print_summary(results: dict):
         print("No HH Cable data for comparison.")
         return
 
-    for model_name in ["fast", "hybrid_fast", "cable", "wave", "hybrid_wave"]:
+    for model_name in ["soma_ais", "cable", "wave", "hybrid_wave"]:
         model_data = {d[0]: d[1] for d in results.get(model_name, [])}
         shared_ns = sorted(set(hh_data.keys()) & set(model_data.keys()))
 
@@ -504,7 +482,7 @@ def _print_summary(results: dict):
         last_hh = results["hh_cable"][-1]
         hh_time_per_neuron = last_hh[1] / last_hh[0]
 
-        for model_name in ["fast", "hybrid_fast", "cable", "wave", "hybrid_wave"]:
+        for model_name in ["soma_ais", "cable", "wave", "hybrid_wave"]:
             model_data = results.get(model_name, [])
             if model_data:
                 largest_n = model_data[-1][0]
@@ -532,8 +510,7 @@ def main():
     print("=" * 70)
     print("Models:")
     print("  - hh_cable:     Full HH cable equation (physics baseline)")
-    print("  - fast:         Pre-generated waveform + delay-line")
-    print("  - hybrid_fast:  Fresh HH generation + delay-line")
+    print("  - soma_ais:     2-compartment Soma-AIS model")
     print("  - cable:        Pre-generated waveform + passive cable")
     print("  - wave:         Pre-generated waveform + 1D wave equation")
     print("  - hybrid_wave:  Fresh HH generation + 1D wave equation")
@@ -545,7 +522,7 @@ def main():
     results = _run_scaling_benchmark()
 
     # Plot results
-    _plot_scaling(results, _OUTPUT_DIR / "speed_scaling.png")
+    _plot_scaling(results, str(_OUTPUT_DIR / "speed_scaling.png"))
 
     # Print summary
     _print_summary(results)

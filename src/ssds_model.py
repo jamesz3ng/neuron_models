@@ -7,11 +7,7 @@ to compress complex, history-dependent spike shapes into a small basis set
 
 Protocols:
 - A (Fatigue Spectrum): 10-pulse trains at [75, 80, 85] Hz
-- B (Refractory Curve): Paired pulses with ISI 2.0-20.0ms
 - C (Population Heterogeneity): Single pulses with g_Na/g_K ±15% variation
-- D (Hyperpolarization Rebound): Super-charged spikes from hyperpolarized states
-
-Target: ~1,100 spikes to ensure robust PCA capturing full AP shape space.
 """
 
 from pathlib import Path
@@ -33,7 +29,7 @@ _OUTPUT_DIR = Path(__file__).parent.parent / "output"
 
 # Spike extraction parameters
 WINDOW_PRE_MS = 5.0  # ms before peak (AIS rise is fast)
-WINDOW_POST_MS = 10.0   # ms after peak (AIS repolarization is fast)
+WINDOW_POST_MS = 8.0  # ms after peak (AIS repolarization is fast)
 WINDOW_TOTAL_MS = WINDOW_PRE_MS + WINDOW_POST_MS
 WINDOW_POINTS = int(WINDOW_TOTAL_MS / DT_MS)
 PRE_PEAK_POINTS = int(WINDOW_PRE_MS / DT_MS)
@@ -54,9 +50,9 @@ def _simulate_and_harvest(
     metadata: dict | None = None,
     extract_indices: list[int] | None = None,
     # 2-Compartment Scaling (defaults)
-    g_na_s_scale: float = 1.0, 
+    g_na_s_scale: float = 1.0,
     g_k_s_scale: float = 1.0,
-    g_na_a_scale: float = 1.0, 
+    g_na_a_scale: float = 1.0,
     g_k_a_scale: float = 1.0,
     g_couple_scale: float = 1.0,
 ) -> list[dict]:
@@ -89,7 +85,7 @@ def _simulate_and_harvest(
     # Create stimulus and run simulation
     # Create stimulus and run simulation
     i_stim = create_pulse_train(t_end_ms, pulse_times_ms)
-    
+
     # Run 2-Compartment Model
     # We ignore the Soma trace (Vs) and currents, targeting the AIS trace (Va)
     _, _, Va, _, _, _, _ = run_2comp_simulation(
@@ -100,7 +96,7 @@ def _simulate_and_harvest(
         g_k_s_scale=g_k_s_scale,
         g_na_a_scale=g_na_a_scale,
         g_k_a_scale=g_k_a_scale,
-        g_couple_scale=g_couple_scale
+        g_couple_scale=g_couple_scale,
     )
 
     # Find peaks on the AIS trace
@@ -116,7 +112,9 @@ def _simulate_and_harvest(
     spikes = []
     for i in indices_to_extract:
         peak_idx = peaks[i]
-        waveform = extract_aligned_spike(Va, peak_idx, PRE_PEAK_POINTS, POST_PEAK_POINTS)
+        waveform = extract_aligned_spike(
+            Va, peak_idx, PRE_PEAK_POINTS, POST_PEAK_POINTS
+        )
         if waveform is not None:
             spike_data = {
                 "waveform": waveform,
@@ -139,14 +137,14 @@ def generate_protocol_a() -> list[dict]:
     # 90hz ~ 7% diff
     # 100hz ~ 18% diff
 
-    frequencies_hz = [70]
+    frequencies_hz = [50, 90, 100]
     print(f"Protocol A: Fatigue Spectrum (10 pulses at {frequencies_hz} Hz)...")
 
     all_spikes = []
 
     for freq_hz in frequencies_hz:
         isi_ms = 1000.0 / freq_hz
-        pulse_times = [5.0 + i * isi_ms for i in range(10)]
+        pulse_times = [5.0 + i * isi_ms for i in range(20)]
 
         spikes = _simulate_and_harvest(
             pulse_times,
@@ -164,32 +162,6 @@ def generate_protocol_a() -> list[dict]:
     return all_spikes
 
 
-# Protocol B: Refractory Curve
-
-
-def generate_protocol_b() -> list[dict]:
-    print("Protocol B: Refractory Curve (paired pulses, ISI 2.0-20.0ms, step 0.2ms)...")
-
-    isi_values = np.arange(2.0, 20.2, 0.2)
-    spikes = []
-
-    for isi_ms in isi_values:
-        pulse_times = [5.0, 5.0 + isi_ms]
-
-        # Extract only the second spike (index 1)
-        result = _simulate_and_harvest(
-            pulse_times,
-            metadata={"protocol": "B_refractory", "isi_ms": float(isi_ms)},
-            extract_indices=[1],
-        )
-        spikes.extend(result)
-
-    print(
-        f"  Extracted {len(spikes)} second-spike waveforms (from {len(isi_values)} ISI values)"
-    )
-    return spikes
-
-
 # Protocol C: Population Heterogeneity
 
 
@@ -200,13 +172,13 @@ def generate_protocol_c(n_samples: int = 1000, seed: int = 42) -> list[dict]:
     spikes = []
 
     for _ in range(n_samples):
-        g_na_scale = np.random.uniform(0.85, 1.15)
-        g_k_scale = np.random.uniform(0.85, 1.15)
+        g_na_scale = np.random.uniform(0.70, 1.30)
+        g_k_scale = np.random.uniform(0.70, 1.30)
 
         result = _simulate_and_harvest(
             [5.0],  # Single pulse
-            g_na_a_scale=g_na_scale, # Tune AIS density
-            g_k_a_scale=g_k_scale,   # Tune AIS density
+            g_na_a_scale=g_na_scale,  # Tune AIS density
+            g_k_a_scale=g_k_scale,  # Tune AIS density
             metadata={
                 "protocol": "C_population",
                 "g_na_scale": g_na_scale,
@@ -220,49 +192,6 @@ def generate_protocol_c(n_samples: int = 1000, seed: int = 42) -> list[dict]:
     return spikes
 
 
-# =============================================================================
-# Protocol D: Hyperpolarization Rebound
-# =============================================================================
-
-
-def generate_protocol_d(n_samples: int = 50) -> list[dict]:
-    print("Protocol D: Hyperpolarization Rebound (super-charged spikes)...")
-
-    v_hyper_levels = [-70, -75, -80, -85, -90]
-    samples_per_level = n_samples // len(v_hyper_levels)
-
-    spikes = []
-
-    for v_hyper in v_hyper_levels:
-        # Compute steady-state gates at hyperpolarized voltage
-        m_init, h_init, n_init = HHPhysics.steady_state(v_hyper)
-
-        for _ in range(samples_per_level):
-            result = _simulate_and_harvest(
-                [5.0],  # Single pulse
-                v_init=v_hyper,
-                gates_init=(m_init, h_init, n_init),
-                metadata={
-                    "protocol": "D_hyperpol",
-                    "v_hyper": v_hyper,
-                    "h_init": h_init,
-                },
-                extract_indices=[0],
-            )
-
-            # Add peak voltage to metadata
-            for s in result:
-                s["peak_voltage"] = s["waveform"][PRE_PEAK_POINTS]
-
-            spikes.extend(result)
-
-        print(
-            f"  V_hyper={v_hyper}mV: h_init={h_init:.3f}, extracted {samples_per_level} spikes"
-        )
-
-    print(f"  Total extracted: {len(spikes)} super-charged spikes")
-    return spikes
-
 # PCA Analysis (unchanged)
 
 
@@ -270,18 +199,20 @@ def run_pca_analysis(spikes: list[dict], n_components: int = 3) -> dict:
     """Run PCA on spike waveforms."""
     # Stack waveforms
     X = np.vstack([s["waveform"] for s in spikes])
-    
+
     # Filter out NaNs/Infs
     valid_mask = np.all(np.isfinite(X), axis=1)
     n_total = len(spikes)
     n_valid = np.sum(valid_mask)
-    
+
     if n_valid < n_total:
-        print(f"WARNING: Dropping {n_total - n_valid} invalid spikes (NaN/Inf) from PCA.")
+        print(
+            f"WARNING: Dropping {n_total - n_valid} invalid spikes (NaN/Inf) from PCA."
+        )
         X = X[valid_mask]
         # Also limit spikes list to valid ones (though difficult as we only have X here)
         # For basis generation, X is what matters.
-    
+
     print(f"\nPCA Analysis: {X.shape[0]} spikes, {X.shape[1]} time points")
 
     pca = PCA(n_components=n_components)
@@ -375,29 +306,6 @@ def validate_reconstructions(spikes: list[dict], pca_result: dict) -> dict:
                     f"Last spike at {freq}Hz (fatigued)",
                 )
 
-    # Protocol B: Refractory recovery
-    refractory_indices = [
-        i for i, s in enumerate(spikes) if s["protocol"] == "B_refractory"
-    ]
-    if len(refractory_indices) >= 3:
-        sorted_refr = sorted(
-            refractory_indices, key=lambda i: spikes[i].get("isi_ms", 0)
-        )
-        idx = sorted_refr[0]
-        add_case(
-            "B_short_ISI",
-            idx,
-            f"Short ISI={spikes[idx]['isi_ms']:.1f}ms (partial recovery)",
-        )
-        mid_idx = sorted_refr[len(sorted_refr) // 2]
-        add_case(
-            "B_medium_ISI", mid_idx, f"Medium ISI={spikes[mid_idx]['isi_ms']:.1f}ms"
-        )
-        idx = sorted_refr[-1]
-        add_case(
-            "B_long_ISI", idx, f"Long ISI={spikes[idx]['isi_ms']:.1f}ms (full recovery)"
-        )
-
     # Protocol C: Population extremes
     pop_indices = [i for i, s in enumerate(spikes) if s["protocol"] == "C_population"]
     if pop_indices:
@@ -444,36 +352,6 @@ def validate_reconstructions(spikes: list[dict], pca_result: dict) -> dict:
             both_low,
             f"Both low: gNa={spikes[both_low]['g_na_scale']:.2f}, gK={spikes[both_low]['g_k_scale']:.2f}",
         )
-
-    # Protocol D: Hyperpolarization rebound
-    hyperpol_indices = [
-        i for i, s in enumerate(spikes) if s["protocol"] == "D_hyperpol"
-    ]
-    if hyperpol_indices:
-        hyper_groups = {}
-        for idx in hyperpol_indices:
-            v_hyper = spikes[idx].get("v_hyper", -65)
-            hyper_groups.setdefault(v_hyper, []).append(idx)
-
-        most_hyper = min(hyper_groups.keys())
-        if hyper_groups[most_hyper]:
-            idx = hyper_groups[most_hyper][0]
-            peak_v = spikes[idx].get("peak_voltage", 0)
-            add_case(
-                "D_super_charged",
-                idx,
-                f"V_hyper={most_hyper}mV, h={spikes[idx]['h_init']:.2f}, peak={peak_v:.1f}mV",
-            )
-
-        least_hyper = max(hyper_groups.keys())
-        if hyper_groups[least_hyper] and least_hyper != most_hyper:
-            idx = hyper_groups[least_hyper][0]
-            peak_v = spikes[idx].get("peak_voltage", 0)
-            add_case(
-                "D_mild_hyper",
-                idx,
-                f"V_hyper={least_hyper}mV, h={spikes[idx]['h_init']:.2f}, peak={peak_v:.1f}mV",
-            )
 
     # Worst and best cases
     worst_idx = int(np.argmax(errors_2pc))
@@ -639,16 +517,14 @@ def plot_results(spikes: list[dict], pca_result: dict, output_path: str):
     """Create 3-panel figure showing spike library, eigen-spikes, and reconstruction."""
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(3, 1, figsize=(12, 12))
+    fig, axes = plt.subplots(3, 1, figsize=(7, 12))
     t_ms = np.arange(WINDOW_POINTS) * DT_MS - WINDOW_PRE_MS
 
-    # Panel 1: All spikes + Mean
+    # Panel 1: All spikes + Mean (Seaborn deep palette)
     ax1 = axes[0]
     colors = {
-        "A_fatigue": "red",
-        "B_refractory": "blue",
-        "C_population": "gray",
-        "D_hyperpol": "green",
+        "A_fatigue": "#c44e52",  # deep red
+        "C_population": "#8c8c8c",  # neutral gray
     }
 
     for s in spikes:
@@ -672,12 +548,12 @@ def plot_results(spikes: list[dict], pca_result: dict, output_path: str):
     ax1.axhline(-65, color="gray", linestyle="--", alpha=0.3)
     ax1.set_xlabel("Time relative to peak (ms)")
     ax1.set_ylabel("Voltage (mV)")
-    ax1.set_title(f"Spike Library: {len(spikes)} aligned spikes")
+    ax1.set_title(f"Spike Library")
     ax1.legend(loc="upper right")
-    ax1.grid(True, alpha=0.3)
+    ax1.grid(False)
     ax1.set_xlim(-WINDOW_PRE_MS, WINDOW_POST_MS)
 
-    # Panel 2:
+    # Panel 2: Principal Components (Seaborn deep palette)
     ax2 = axes[1]
     components = pca_result["components"]
     var_ratios = pca_result["explained_variance_ratio"]
@@ -686,14 +562,14 @@ def plot_results(spikes: list[dict], pca_result: dict, output_path: str):
     ax2.plot(
         t_ms,
         components[0] * scale,
-        "r-",
+        color="#c44e52",
         linewidth=2,
         label=f"PC1 ({var_ratios[0] * 100:.1f}%)",
     )
     ax2.plot(
         t_ms,
         components[1] * scale,
-        "b-",
+        color="#4c72b0",
         linewidth=2,
         label=f"PC2 ({var_ratios[1] * 100:.1f}%)",
     )
@@ -701,7 +577,7 @@ def plot_results(spikes: list[dict], pca_result: dict, output_path: str):
         ax2.plot(
             t_ms,
             components[2] * scale,
-            "g-",
+            color="#55a868",
             linewidth=2,
             label=f"PC3 ({var_ratios[2] * 100:.1f}%)",
         )
@@ -813,11 +689,9 @@ def main():
     print("-" * 70)
 
     spikes_a = generate_protocol_a()
-    spikes_b = generate_protocol_b()
-    spikes_c = generate_protocol_c(n_samples=1000)
-    spikes_d = generate_protocol_d(n_samples=50)
+    spikes_c = generate_protocol_c(n_samples=500)
 
-    all_spikes = spikes_a + spikes_b + spikes_c + spikes_d
+    all_spikes = spikes_a + spikes_c
     print(f"\nTotal spikes collected: {len(all_spikes)}")
 
     # Run PCA
@@ -877,7 +751,9 @@ def main():
         f"  All spikes 99th percentile: {summary['all_spikes_percentile_99_rmse_2pc']:.3f} mV"
     )
 
-    plot_validation(all_spikes, pca_result, validation, _OUTPUT_DIR / "spike_validation.png")
+    plot_validation(
+        all_spikes, pca_result, validation, _OUTPUT_DIR / "spike_validation.png"
+    )
 
     # Summary
     print("\n" + "=" * 70)
