@@ -76,9 +76,11 @@ def simulate_hh_cable(
     stim_duration_s: float | None = None,
     stim_amplitude: float | None = None,
     stim_index: int | None = None,
+    stim_waveform: np.ndarray | None = None,
+    t_s_stim: np.ndarray | None = None,
     store_history: bool | None = None,
     history_stride: int | None = None,
-):
+) -> dict:
     defaults = _default_params()
     L = defaults["L"] if L is None else L
     T_s = defaults["T_s"] if T_s is None else T_s
@@ -124,7 +126,15 @@ def simulate_hh_cable(
         h_matrix[0, :] = alpha_h(v_rest) / (alpha_h(v_rest) + beta_h(v_rest))
         n_matrix[0, :] = alpha_n_safe(v_rest) / (alpha_n_safe(v_rest) + beta_n(v_rest))
 
-        input_steps = int(stim_duration_s / dt_s)
+        # Prepare stimulus boundary
+        if stim_waveform is not None and t_s_stim is not None:
+            t_sim = np.arange(n_t) * dt_s
+            i_applied_boundary = np.interp(t_sim, t_s_stim, stim_waveform, left=0.0, right=0.0)
+            use_waveform_stim = True
+        else:
+            use_waveform_stim = False
+            input_steps = int(stim_duration_s / dt_s)
+
         for t in range(n_t - 1):
             v = v_matrix[t, :]
             m = m_matrix[t, :]
@@ -142,7 +152,10 @@ def simulate_hh_cable(
             i_ion = i_Na + i_K + i_L
 
             i_applied = np.zeros(n_x)
-            if t < input_steps and 0 <= stim_index < n_x:
+            if use_waveform_stim:
+                if 0 <= stim_index < n_x:
+                    i_applied[stim_index] = i_applied_boundary[t]
+            elif t < input_steps and 0 <= stim_index < n_x:
                 i_applied[stim_index] = stim_amplitude
 
             v_matrix[t + 1, :] = v
@@ -183,7 +196,15 @@ def simulate_hh_cable(
     h = np.full(n_x, alpha_h(v_rest) / (alpha_h(v_rest) + beta_h(v_rest)))
     n = np.full(n_x, alpha_n_safe(v_rest) / (alpha_n_safe(v_rest) + beta_n(v_rest)))
 
-    input_steps = int(stim_duration_s / dt_s)
+    # Prepare stimulus boundary
+    if stim_waveform is not None and t_s_stim is not None:
+        t_sim = np.arange(n_t) * dt_s
+        i_applied_boundary = np.interp(t_sim, t_s_stim, stim_waveform, left=0.0, right=0.0)
+        use_waveform_stim = True
+    else:
+        use_waveform_stim = False
+        input_steps = int(stim_duration_s / dt_s)
+
     for t in range(n_t - 1):
         v_inner = v[1:-1]
         diffusion_term = alpha * (v[:-2] - 2 * v_inner + v[2:])
@@ -193,12 +214,14 @@ def simulate_hh_cable(
         i_L = g_L * (v - E_L)
         i_ion = i_Na + i_K + i_L
 
-        if t < input_steps and 0 <= stim_index < n_x:
-            i_applied_inner = np.zeros(n_x - 2)
-            if 1 <= stim_index < n_x - 1:
-                i_applied_inner[stim_index - 1] = stim_amplitude
-        else:
-            i_applied_inner = 0.0
+        i_applied = np.zeros(n_x)
+        if use_waveform_stim:
+            if 0 <= stim_index < n_x:
+                i_applied[stim_index] = i_applied_boundary[t]
+        elif t < input_steps and 0 <= stim_index < n_x:
+            i_applied[stim_index] = stim_amplitude
+
+        i_applied_inner = i_applied[1:-1]
 
         dv_dt_inner = (
             diffusion_term

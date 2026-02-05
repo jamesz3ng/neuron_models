@@ -391,6 +391,7 @@ def validate_reconstructions(spikes: list[dict], pca_result: dict) -> dict:
         "all_spikes_max_rmse_3pc": float(np.max(errors_3pc)),
         "all_spikes_percentile_95_rmse_3pc": float(np.percentile(errors_3pc, 95)),
         "all_spikes_percentile_99_rmse_3pc": float(np.percentile(errors_3pc, 99)),
+        "explained_variance_ratio": pca_result["explained_variance_ratio"].tolist(),
     }
 
     return validation
@@ -473,9 +474,15 @@ def plot_validation(
         ax_summary = axes[n_cases]
         ax_summary.axis("off")
         summary = validation["summary"]
+        evr = summary["explained_variance_ratio"]
         summary_text = (
             f"VALIDATION SUMMARY\n{'=' * 30}\n\n"
             f"Test Cases: {summary['n_test_cases']}\n\n"
+            f"Explained Variance:\n"
+            f"  PC1: {evr[0]*100:.1f}%\n"
+            f"  PC2: {evr[1]*100:.1f}%\n"
+            f"  PC3: {evr[2]*100:.1f}%\n"
+            f"  Total (3PC): {sum(evr[:3])*100:.1f}%\n\n"
             f"Selected Test Cases:\n"
             f"  Mean RMSE (2PC): {summary['mean_rmse_2pc']:.3f} mV\n"
             f"  Max RMSE (2PC):  {summary['max_rmse_2pc']:.3f} mV\n"
@@ -750,6 +757,13 @@ def main():
     print(
         f"  All spikes 99th percentile: {summary['all_spikes_percentile_99_rmse_2pc']:.3f} mV"
     )
+
+    evr = summary["explained_variance_ratio"]
+    print(f"\nCaptured Variance:")
+    print(f"  PC1: {evr[0]*100:.2f}%")
+    print(f"  PC2: {evr[1]*100:.2f}%")
+    print(f"  PC3: {evr[2]*100:.2f}%")
+    print(f"  Total: {sum(evr[:3])*100:.2f}%")
 
     plot_validation(
         all_spikes, pca_result, validation, _OUTPUT_DIR / "spike_validation.png"
