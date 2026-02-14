@@ -54,15 +54,9 @@ class EventPropagator:
         # --- Reconstruction taper ---
         # The HH afterhyperpolarization (AHP) doesn't recover to v_rest within
         # the 8ms post-peak window: it's still ~7mV below rest at window end.
-        # Rather than distorting the basis (which hurts encode/decode fidelity),
-        # we build a taper applied at reconstruction time that blends the decoded
+        # We build a taper applied at reconstruction time that blends the decoded
         # waveform into v_rest at the window boundaries.
-        #
-        # Taper regions:
-        #   - Fade-in: first 3ms of pre-peak window (the early pre-spike region
-        #     may sit slightly off rest)
-        #   - Fade-out: last 5ms of post-peak window (covers the AHP recovery)
-        #   - The active spike region in between is untapered (weight = 1.0)
+        
         fade_in_samples = int(3.0 / self.dt_ms)  # 3ms fade-in
         fade_out_samples = int(5.0 / self.dt_ms)  # 5ms fade-out
         n_points = self.window_samples
