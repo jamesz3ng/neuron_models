@@ -6,7 +6,7 @@ to compress complex, history-dependent spike shapes into a small basis set
 (Mean + 2-3 principal components).
 
 Protocols:
-- A (Fatigue Spectrum): 10-pulse trains at [75, 80, 85] Hz
+- A (Fatigue Spectrum): 20-pulse trains at [50, 90, 100] Hz
 - C (Population Heterogeneity): Single pulses with g_Na/g_K ±15% variation
 """
 
@@ -100,7 +100,7 @@ def _simulate_and_harvest(
     )
 
     # Find peaks on the AIS trace
-    peaks = find_spike_peaks(Va)
+    peaks = find_spike_peaks(Va, threshold_mv=SPIKE_THRESHOLD_MV)
 
     # Determine which spikes to extract
     if extract_indices is None:
@@ -138,7 +138,7 @@ def generate_protocol_a() -> list[dict]:
     # 100hz ~ 18% diff
 
     frequencies_hz = [50, 90, 100]
-    print(f"Protocol A: Fatigue Spectrum (10 pulses at {frequencies_hz} Hz)...")
+    print(f"Protocol A: Fatigue Spectrum (20 pulses at {frequencies_hz} Hz)...")
 
     all_spikes = []
 
@@ -146,16 +146,22 @@ def generate_protocol_a() -> list[dict]:
         isi_ms = 1000.0 / freq_hz
         pulse_times = [5.0 + i * isi_ms for i in range(20)]
 
+        # Extract all full spikes that cross threshold from the fatigue train.
+        # Partial APs that do not cross threshold are ignored by the detector.
         spikes = _simulate_and_harvest(
             pulse_times,
             metadata={"protocol": "A_fatigue", "freq_hz": freq_hz},
+            extract_indices=list(range(len(pulse_times))),
         )
 
         # Add frequency-specific spike numbering
-        for s in spikes:
+        for train_idx, s in enumerate(spikes, start=1):
             s["freq_hz"] = freq_hz
+            s["train_spike_idx"] = train_idx
+            s["n_stim_pulses"] = len(pulse_times)
+            s["n_detected_spikes"] = len(spikes)
 
-        print(f"  {freq_hz}Hz: Found {len(spikes)} spikes")
+        print(f"  {freq_hz}Hz: Found {len(spikes)}/{len(pulse_times)} full spikes")
         all_spikes.extend(spikes)
 
     print(f"  Total extracted: {len(all_spikes)} spikes")
@@ -293,17 +299,11 @@ def validate_reconstructions(spikes: list[dict], pca_result: dict) -> dict:
 
         for freq in sorted(freq_groups.keys()):
             indices = freq_groups[freq]
-            if indices:
+            for train_order, idx in enumerate(indices, start=1):
                 add_case(
-                    f"A_fresh_{freq}Hz",
-                    indices[0],
-                    f"First spike at {freq}Hz (fresh neuron)",
-                )
-            if len(indices) >= 2:
-                add_case(
-                    f"A_fatigued_{freq}Hz",
-                    indices[-1],
-                    f"Last spike at {freq}Hz (fatigued)",
+                    f"A_fatigue_{freq}Hz_s{train_order:02d}",
+                    idx,
+                    f"Detected spike {train_order}/{len(indices)} at {freq}Hz",
                 )
 
     # Protocol C: Population extremes
@@ -696,7 +696,7 @@ def main():
     print("-" * 70)
 
     spikes_a = generate_protocol_a()
-    spikes_c = generate_protocol_c(n_samples=500)
+    spikes_c = generate_protocol_c(n_samples=1000)
 
     all_spikes = spikes_a + spikes_c
     print(f"\nTotal spikes collected: {len(all_spikes)}")
