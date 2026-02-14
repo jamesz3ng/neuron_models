@@ -17,7 +17,7 @@ _OUTPUT_DIR = _ROOT / "output"
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.event_model import EventPropagator, _generate_hh_signal
+from src.event_model import EventPropagator, _generate_ais_signal
 
 # =============================================================================
 # Configuration
@@ -61,7 +61,7 @@ def main():
         # 1. Generate Input (Paired Pulse)
         # We assume 2 pulses. Freq = 1000/ISI.
         freq = 1000.0 / isi
-        t_ms, v_in = _generate_hh_signal(
+        t_ms, v_in = _generate_ais_signal(
             freq_hz=freq, n_pulses=2, pre_ms=5.0, post_ms=15.0
         )
 

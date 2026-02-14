@@ -51,26 +51,29 @@ class EventPropagator:
         self.delay_samples = int(delay_ms / self.dt_ms)
         self.v_rest = v_rest
 
-        # --- TAPERING FIX ---
-        # Force endpoints to match v_rest smoothly to prevent "square step" artifacts.
-        # This applies a fade-in/fade-out window to the basis functions.
-        taper_len = 50  # 0.5 ms taper (assuming 0.01ms dt)
-        n_points = self.mean_waveform.shape[0]
+        # --- Reconstruction taper ---
+        # The HH afterhyperpolarization (AHP) doesn't recover to v_rest within
+        # the 8ms post-peak window: it's still ~7mV below rest at window end.
+        # Rather than distorting the basis (which hurts encode/decode fidelity),
+        # we build a taper applied at reconstruction time that blends the decoded
+        # waveform into v_rest at the window boundaries.
+        #
+        # Taper regions:
+        #   - Fade-in: first 3ms of pre-peak window (the early pre-spike region
+        #     may sit slightly off rest)
+        #   - Fade-out: last 5ms of post-peak window (covers the AHP recovery)
+        #   - The active spike region in between is untapered (weight = 1.0)
+        fade_in_samples = int(3.0 / self.dt_ms)  # 3ms fade-in
+        fade_out_samples = int(5.0 / self.dt_ms)  # 5ms fade-out
+        n_points = self.window_samples
 
-        if n_points > 2 * taper_len:
-            # Create taper window (0->1 ... 1->0)
-            taper = np.ones(n_points)
-            taper[:taper_len] = np.linspace(0.0, 1.0, taper_len)
-            taper[-taper_len:] = np.linspace(1.0, 0.0, taper_len)
-
-            # 1. Taper Mean Waveform
-            # Calculate perturbation from rest, taper it, then restore rest
-            perturbation = self.mean_waveform - self.v_rest
-            self.mean_waveform = self.v_rest + (perturbation * taper)
-
-            # 2. Taper Components (they represent variance, should decay to 0)
-            for i in range(self.components.shape[0]):
-                self.components[i] *= taper
+        self._recon_taper = np.ones(n_points)
+        if fade_in_samples > 0 and n_points > fade_in_samples:
+            self._recon_taper[:fade_in_samples] = np.linspace(0.0, 1.0, fade_in_samples)
+        if fade_out_samples > 0 and n_points > fade_out_samples:
+            self._recon_taper[-fade_out_samples:] = np.linspace(
+                1.0, 0.0, fade_out_samples
+            )
 
         # Pre-compute for fast encoding
         self.basis_matrix = self.components
@@ -87,64 +90,111 @@ class EventPropagator:
     def decode(self, weights: np.ndarray) -> np.ndarray:
         return self.mean_waveform + np.dot(weights, self.basis_matrix)
 
-    def simulate(self, v_source: np.ndarray, t_ms: np.ndarray | None = None) -> dict:
+    def _extract_events(
+        self, v_source: np.ndarray, *, delay_samples: int | None = None
+    ) -> list[tuple[int, np.ndarray]]:
+        """Detect threshold crossings and encode spikes as delayed events."""
         n_samples = len(v_source)
-        if t_ms is None:
-            t_ms = np.arange(n_samples) * self.dt_ms
+        applied_delay = self.delay_samples if delay_samples is None else delay_samples
 
-        # Step 1: Scan & Encode
         events = []
         i = 0
         while i < n_samples - 1:
             if v_source[i] < self.spike_threshold_mv <= v_source[i + 1]:
-                # Find peak
                 search_end = min(i + self.peak_search_samples, n_samples)
                 peak_idx = i + np.argmax(v_source[i:search_end])
 
-                # Extract window (padded)
                 win_start = peak_idx - self.pre_samples
                 win_end = peak_idx + self.post_samples
-
                 v_window = np.full(self.window_samples, self.v_rest)
 
-                # Copy logic handling boundaries
                 src_start = max(0, win_start)
                 src_end = min(n_samples, win_end)
                 dest_start = max(0, -win_start)
                 dest_end = dest_start + (src_end - src_start)
-
                 v_window[dest_start:dest_end] = v_source[src_start:src_end]
 
-                # Encode & Store
                 weights = self.encode(v_window)
-                events.append((peak_idx + self.delay_samples, weights))
-
+                events.append((peak_idx + applied_delay, weights))
                 i = peak_idx + self.lockout_samples
             else:
                 i += 1
 
-        # Step 2: Reconstruct (direct overwrite - last spike wins)
-        v_out = np.full(n_samples, self.v_rest)
+        return events
 
+    def _reconstruct_events(
+        self,
+        events: list[tuple[int, np.ndarray]],
+        n_samples: int,
+        *,
+        mode: str = "overwrite",
+    ) -> np.ndarray:
+        """
+        Reconstruct waveform from events.
+
+        Parameters
+        ----------
+        events : list[tuple[int, np.ndarray]]
+            List of (arrival_idx, PCA weights).
+        n_samples : int
+            Output waveform length.
+        mode : str
+            "overwrite" for last-event dominance, "sum" for additive perturbations.
+        """
+        if mode not in {"overwrite", "sum"}:
+            raise ValueError("mode must be 'overwrite' or 'sum'")
+
+        v_out = np.full(n_samples, self.v_rest)
         for arrival_idx, weights in events:
             v_recon = self.decode(weights)
 
-            # Calculate destination indices (handling boundaries)
+            # Apply reconstruction taper: blend decoded waveform into v_rest
+            # at window boundaries to eliminate step artifacts from the AHP tail
+            perturbation = v_recon - self.v_rest
+            v_tapered = self.v_rest + perturbation * self._recon_taper
+
             start = arrival_idx - self.pre_samples
             end = arrival_idx + self.post_samples
-
             src_start = max(0, -start)
             src_end = self.window_samples - max(0, end - n_samples)
             dest_start = max(0, start)
             dest_end = min(n_samples, end)
 
-            # Direct overwrite: paste absolute voltage (last spike wins)
-            if dest_end > dest_start:
-                v_out[dest_start:dest_end] = v_recon[src_start:src_end]
+            if dest_end <= dest_start:
+                continue
+
+            if mode == "overwrite":
+                v_out[dest_start:dest_end] = v_tapered[src_start:src_end]
+            else:
+                v_out[dest_start:dest_end] += v_tapered[src_start:src_end] - self.v_rest
+
+        return v_out
+
+    def _coerce_sources(self, v_sources: np.ndarray | list[np.ndarray]) -> np.ndarray:
+        """Normalize converging source traces to shape (n_sources, n_samples)."""
+        if isinstance(v_sources, list):
+            if len(v_sources) == 0:
+                raise ValueError("v_sources must contain at least one source trace")
+            sources = np.vstack([np.asarray(v, dtype=float) for v in v_sources])
+        else:
+            sources = np.asarray(v_sources, dtype=float)
+            if sources.ndim == 1:
+                sources = sources[np.newaxis, :]
+            elif sources.ndim != 2:
+                raise ValueError("v_sources must be 1D, 2D, or list of 1D arrays")
+        return sources
+
+    def simulate(self, v_source: np.ndarray, t_ms: np.ndarray | None = None) -> dict:
+        n_samples = len(v_source)
+        if t_ms is None:
+            t_ms = np.arange(n_samples) * self.dt_ms
+
+        events = self._extract_events(v_source)
+        v_out = self._reconstruct_events(events, n_samples, mode="overwrite")
 
         # Stats
         raw_size = n_samples * 8
-        event_size = len(events) * 4 * 8
+        event_size = len(events) * (1 + self.n_components) * 8
         ratio = raw_size / event_size if event_size > 0 else float("inf")
 
         return {
@@ -153,6 +203,139 @@ class EventPropagator:
             "n_spikes": len(events),
             "compression_ratio": ratio,
             "events": events,
+        }
+
+    def simulate_converging(
+        self,
+        v_sources: np.ndarray | list[np.ndarray],
+        t_ms: np.ndarray | None = None,
+        *,
+        tau_ms: float = 0.01,
+        input_gain: float = 1.0,
+        delays_ms: float | list[float] | np.ndarray | None = None,
+        fusion_mode: str = "lpf",
+        baseline_center: bool = True,
+    ) -> dict:
+        """
+        Simulate convergence of multiple upstream sources at one downstream node.
+
+        Parameters
+        ----------
+        v_sources : np.ndarray | list[np.ndarray]
+            Source traces with shape (n_sources, n_samples), (n_samples,), or list.
+        t_ms : np.ndarray | None
+            Time vector in ms. If None, inferred from basis dt.
+        tau_ms : float
+            Membrane time constant for the leaky integrator (ms).
+            Controls how quickly the downstream voltage tracks upstream
+            input. Small tau = fast tracking, large tau = heavy smoothing.
+        input_gain : float
+            Scalar gain applied to upstream perturbations before integration.
+        delays_ms : float | list[float] | np.ndarray | None
+            Optional per-source delays. If scalar, same delay for all sources.
+            If None, uses self.delay_ms for every source.
+        fusion_mode : str
+            'lpf' for leaky-integrator fusion of all arrivals (recommended),
+            'last_event' for legacy overwrite dominance.
+        baseline_center : bool
+            Deprecated. LPF mode now always operates in perturbation-from-rest
+            space. Kept for backward compatibility.
+
+        Returns
+        -------
+        dict
+            Includes fused output, per-source arrivals, event metadata, and stats.
+            'i_in' contains the perturbation from v_rest (diagnostic).
+        """
+        if fusion_mode not in {"lpf", "last_event"}:
+            raise ValueError("fusion_mode must be 'lpf' or 'last_event'")
+        if tau_ms <= 0:
+            raise ValueError("tau_ms must be > 0")
+
+        sources = self._coerce_sources(v_sources)
+        n_sources, n_samples = sources.shape
+
+        if t_ms is None:
+            t_ms = np.arange(n_samples) * self.dt_ms
+        elif len(t_ms) != n_samples:
+            raise ValueError("t_ms length must match source trace length")
+
+        # Resolve per-source delays
+        if delays_ms is None:
+            delay_samples = np.full(n_sources, self.delay_samples, dtype=int)
+        elif np.isscalar(delays_ms):
+            delay_samples = np.full(
+                n_sources, int(round(float(delays_ms) / self.dt_ms)), dtype=int
+            )
+        else:
+            delays_arr = np.asarray(delays_ms, dtype=float)
+            if len(delays_arr) != n_sources:
+                raise ValueError("delays_ms length must match number of sources")
+            delay_samples = np.round(delays_arr / self.dt_ms).astype(int)
+
+        events_by_source: list[list[tuple[int, np.ndarray]]] = []
+        arrivals_by_source = np.full((n_sources, n_samples), self.v_rest, dtype=float)
+        merged_events: list[tuple[int, np.ndarray]] = []
+
+        for src_idx in range(n_sources):
+            events = self._extract_events(
+                sources[src_idx], delay_samples=int(delay_samples[src_idx])
+            )
+            events_by_source.append(events)
+            merged_events.extend(events)
+            arrivals_by_source[src_idx] = self._reconstruct_events(
+                events, n_samples, mode="overwrite"
+            )
+
+        if fusion_mode == "last_event":
+            merged_events.sort(key=lambda e: e[0])
+            v_out = self._reconstruct_events(merged_events, n_samples, mode="overwrite")
+            i_in = np.zeros(n_samples)
+        else:
+            # Leaky integrator: tau * dV/dt = -(V - V_rest) + gain * I_upstream
+            # Discrete form: V[i] = V[i-1] + (dt/tau)*(-( V[i-1] - V_rest) + drive)
+            v_out = np.full(n_samples, self.v_rest, dtype=float)
+            i_in = np.zeros(n_samples, dtype=float)
+            alpha = self.dt_ms / tau_ms  # dimensionless decay factor
+
+            for i in range(1, n_samples):
+                # Sum upstream perturbations from rest, rectified: only
+                # depolarising (positive) perturbations contribute.  The
+                # afterhyperpolarisation is intrinsic to the presynaptic
+                # neuron and should not propagate as negative drive.
+                per_source = arrivals_by_source[:, i - 1] - self.v_rest
+                upstream = np.sum(np.maximum(per_source, 0.0))
+
+                # Scaled upstream drive
+                drive = input_gain * upstream
+
+                # Leaky integrator update
+                v_prev = v_out[i - 1] - self.v_rest
+                v_out[i] = self.v_rest + v_prev + alpha * (-v_prev + drive)
+
+                # Track perturbation for diagnostics
+                i_in[i] = v_out[i] - self.v_rest
+
+        n_spikes_by_source = [len(events) for events in events_by_source]
+        n_spikes_total = int(sum(n_spikes_by_source))
+        raw_size = n_sources * n_samples * 8
+        event_size = n_spikes_total * (1 + self.n_components) * 8
+        ratio = raw_size / event_size if event_size > 0 else float("inf")
+
+        return {
+            "v_out": v_out,
+            "i_in": i_in,
+            "t_ms": t_ms,
+            "n_sources": n_sources,
+            "n_spikes": n_spikes_total,
+            "n_spikes_by_source": n_spikes_by_source,
+            "compression_ratio": ratio,
+            "events_by_source": events_by_source,
+            "arrivals_by_source": arrivals_by_source,
+            "tau_ms": float(tau_ms),
+            "input_gain": float(input_gain),
+            "fusion_mode": fusion_mode,
+            "baseline_center": bool(baseline_center),
         }
 
     def print_memory_stats(self, spikes_per_100ms: int = 5) -> None:
@@ -212,47 +395,43 @@ class EventPropagator:
 
 
 # =============================================================================
-# Helper: Universal HH Signal Generator
+# Helper: AIS Signal Generator
 # =============================================================================
 
 
-def _generate_hh_signal(
+def _generate_ais_signal(
     freq_hz: float = 50.0,
     n_pulses: int = 10,
-    g_na_scale: float = 1.0,
-    g_k_scale: float = 1.0,
-    v_init: float = -65.0,
+    g_na_s_scale: float = 1.0,
+    g_k_s_scale: float = 1.0,
     pre_ms: float = 10.0,
     post_ms: float = 20.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Unified generator for all test protocols.
-    Uses run_simulation from ssds_model for HH physics.
+
+    Uses the 2-compartment (Soma + AIS) model so that the spike shape
+    matches the PCA basis that EventPropagator was trained on.
+    Returns the AIS voltage (Va) as the axonal output signal.
     """
-    from src.simulation import run_simulation, DT_MS
+    from .ais_simulation import run_2comp_simulation
+    from .simulation import DT_MS, create_pulse_train
 
     # Stimulus setup
     isi_ms = 1000.0 / freq_hz
     t_end_ms = pre_ms + (n_pulses * isi_ms) + post_ms
-    n_time = int(t_end_ms / DT_MS)
+    pulse_times = [pre_ms + k * isi_ms for k in range(n_pulses)]
+    i_stim = create_pulse_train(t_end_ms, pulse_times, dt_ms=DT_MS)
 
-    i_stim = np.zeros(n_time)
-    for k in range(n_pulses):
-        t_pulse = pre_ms + k * isi_ms
-        start = int(t_pulse / DT_MS)
-        end = int((t_pulse + 1.0) / DT_MS)  # 1ms duration
-        if start < n_time:
-            i_stim[start : min(end, n_time)] = 30.0  # Amplitude
-
-    t_ms, v_hist = run_simulation(
+    t_ms, _Vs, Va, *_ = run_2comp_simulation(
         t_end_ms,
         i_stim,
-        g_na_scale=g_na_scale,
-        g_k_scale=g_k_scale,
-        v_init=v_init,
+        dt_ms=DT_MS,
+        g_na_s_scale=g_na_s_scale,
+        g_k_s_scale=g_k_s_scale,
     )
 
-    return t_ms, v_hist
+    return t_ms, Va
 
 
 # =============================================================================
@@ -267,16 +446,16 @@ def main():
 
     prop = EventPropagator(delay_ms=5.0)
 
-    # Test Cases
+    # Test Cases — all use 2-comp AIS source matching PCA basis
     cases = [
         ("Fatigue Train (85Hz)", dict(freq_hz=85.0, n_pulses=10)),
         ("Low Freq (20Hz)", dict(freq_hz=20.0, n_pulses=5)),
-        ("Hyperpolarized", dict(freq_hz=50.0, n_pulses=5, v_init=-80.0)),
+        ("Scaled gNa (0.9x)", dict(freq_hz=50.0, n_pulses=5, g_na_s_scale=0.9)),
     ]
 
     for name, params in cases:
         print(f"\nTesting: {name}")
-        t_ms, v_src = _generate_hh_signal(**params)
+        t_ms, v_src = _generate_ais_signal(**params)
         res = prop.simulate(v_src, t_ms)
 
         # Error Calc (Aligned)

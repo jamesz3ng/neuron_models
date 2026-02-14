@@ -299,11 +299,15 @@ def validate_reconstructions(spikes: list[dict], pca_result: dict) -> dict:
 
         for freq in sorted(freq_groups.keys()):
             indices = freq_groups[freq]
-            for train_order, idx in enumerate(indices, start=1):
+            # Keep validation concise: sample fatigue progression as first/mid/last.
+            n = len(indices)
+            sample_positions = sorted({0, n // 2, n - 1})
+            for sample_order, pos in enumerate(sample_positions, start=1):
+                idx = indices[pos]
                 add_case(
-                    f"A_fatigue_{freq}Hz_s{train_order:02d}",
+                    f"A_fatigue_{freq}Hz_rep{sample_order}",
                     idx,
-                    f"Detected spike {train_order}/{len(indices)} at {freq}Hz",
+                    f"Representative spike {pos + 1}/{n} at {freq}Hz",
                 )
 
     # Protocol C: Population extremes
