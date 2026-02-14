@@ -155,6 +155,61 @@ class EventPropagator:
             "events": events,
         }
 
+    def print_memory_stats(self, spikes_per_100ms: int = 5) -> None:
+        """Print memory comparison: DDE delay-line vs Event-Based model."""
+        # DDE stores full waveform buffer (same window as event model)
+        dde_bytes = self.window_samples * 8  # float64
+
+        # Event-based stores per-spike: arrival_time + n_components weights
+        event_bytes_per_spike = (1 + self.n_components) * 8  # float64
+        event_bytes = spikes_per_100ms * event_bytes_per_spike
+
+        # Shared overhead (amortized across all axons)
+        shared_mean = self.mean_waveform.nbytes
+        shared_components = self.components.nbytes
+        shared_total = shared_mean + shared_components
+
+        # Break-even: how many axons before shared overhead is amortized
+        per_axon_savings = dde_bytes - event_bytes
+        breakeven_axons = (
+            int(shared_total / per_axon_savings) if per_axon_savings > 0 else 0
+        )
+
+        # Memory reduction ratio
+        reduction = dde_bytes / event_bytes if event_bytes > 0 else float("inf")
+
+        # Print table
+        print("=" * 80)
+        print("MEMORY COMPARISON: Per-Axon AP Storage")
+        print("=" * 80)
+        print()
+        print("DDE Delay Line (stores full AP waveform buffer):")
+        print(
+            f"  - Window duration: {self.window_pre_ms + self.window_post_ms:.1f} ms "
+            f"(pre: {self.window_pre_ms:.1f} ms, post: {self.window_post_ms:.1f} ms)"
+        )
+        print(f"  - Samples: {self.window_samples:,} @ {self.dt_ms} ms dt")
+        print(f"  - Memory per axon: {dde_bytes:,} bytes ({dde_bytes / 1024:.1f} KB)")
+        print()
+        print("Event-Based Model (sparse spike encoding):")
+        print(
+            f"  - Per spike: {event_bytes_per_spike} bytes "
+            f"(1 arrival_time + {self.n_components} PCA weights)"
+        )
+        print(f"  - Assumed spikes per 100ms: {spikes_per_100ms}")
+        print(f"  - Memory per axon: {event_bytes:,} bytes")
+        print()
+        print("Shared Overhead (amortized across all axons):")
+        print(f"  - Mean waveform: {shared_mean:,} bytes")
+        print(f"  - PCA components ({self.n_components}): {shared_components:,} bytes")
+        print(
+            f"  - Total shared: {shared_total:,} bytes ({shared_total / 1024:.1f} KB)"
+        )
+        print()
+        print(f"Break-even point: {breakeven_axons:,} axons")
+        print(f"Memory Reduction per Axon: {reduction:.0f}x")
+        print("=" * 80)
+
 
 # =============================================================================
 # Helper: Universal HH Signal Generator
@@ -234,6 +289,10 @@ def main():
         rmse = np.sqrt(np.mean(err[mask] ** 2)) if np.any(mask) else 0.0
 
         print(f"  RMSE: {rmse:.3f} mV | Compression: {res['compression_ratio']:.1f}x")
+
+    # Print memory comparison
+    print()
+    prop.print_memory_stats()
 
     print("\nVerification Complete.")
 

@@ -42,7 +42,7 @@ L_UM = 5000.0  # 5mm axon
 N_VALUES = [50, 10000]
 
 # Number of iterations for averaging
-N_ITER = 3
+N_ITER = 5
 
 # Model abbreviations for bar labels
 MODEL_ABBREV = {
@@ -58,11 +58,11 @@ MODEL_FULL_NAMES = {
     "Hybrid Wave": "Hybrid Wave (Wave Equation)",
 }
 
-# Colors for each model
+# Colors for each model - Soft pastel palette (inspired by #ffe6cc, #fff2cc, #dae8fc)
 COLORS = {
-    "HH Cable": "#c44e52",  # Red
-    "Passive Cable": "#55a868",  # Green
-    "Hybrid Wave": "#8172b3",  # Purple
+    "HH Cable": "#ffb380",  # Warm peach/orange
+    "Passive Cable": "#ffd966",  # Soft golden yellow
+    "Hybrid Wave": "#9fc5e8",  # Soft sky blue
 }
 
 # =============================================================================
@@ -197,7 +197,7 @@ def plot_speedup_comparison(results: dict):
     for i, model in enumerate(model_names):
         if model == "Event-Based":
             speedups = [1.0 for _ in N_VALUES]  # Baseline is always 1x
-            color = "#4c72b0"  # Blue
+            color = "#93c47d"  # Soft sage green
             label = "EB = Event-Based (Baseline)"
         else:
             speedups = [results[n][model] for n in N_VALUES]

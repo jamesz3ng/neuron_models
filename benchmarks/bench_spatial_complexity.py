@@ -44,12 +44,12 @@ N_VALUES = [50, 100, 200, 500, 1000, 2000, 5000, 10000, 50000]
 HH_CUTOFF = 50000  # Don't run HH for N > 1000 (too slow for benchmark)
 N_ITER = 3  # Average over 3 runs
 
-# Colors
+# Colors - Soft pastel palette (inspired by #ffe6cc, #fff2cc, #dae8fc)
 COLORS = {
-    "HH Cable": "#c44e52",  # Red
-    "Passive Cable": "#55a868",  # Green
-    "Hybrid Wave": "#8172b3",  # Purple
-    "Hybrid Event": "#4c72b0",  # Blue
+    "HH Cable": "#ffb380",  # Warm peach/orange
+    "Passive Cable": "#ffd966",  # Soft golden yellow
+    "Hybrid Wave": "#9fc5e8",  # Soft sky blue
+    "Hybrid Event": "#93c47d",  # Soft sage green
 }
 
 # =============================================================================
@@ -83,6 +83,24 @@ def benchmark():
 
     # Init Propagator once (O(1) setup)
     prop = EventPropagator(delay_ms=0.0)
+
+    # -------------------------------------------------------------------------
+    # Measure Event-Based model ONCE at start (O(1) - independent of N)
+    # Average over N_ITER runs for stability
+    # -------------------------------------------------------------------------
+    print("\nMeasuring Event-Based model (O(1) baseline)...")
+    event_times = []
+    for i in range(N_ITER):
+        t0 = time.perf_counter()
+        prop.simulate(va_src_1us, t_ms_1us)
+        event_times.append(time.perf_counter() - t0)
+        print(f"  Run {i + 1}/{N_ITER}: {event_times[-1]:.6f}s")
+    event_baseline = np.mean(event_times)
+    print(f"  Average: {event_baseline:.6f}s (used as constant for all N)")
+
+    # Store the same constant time for all N values (horizontal line)
+    for n in N_VALUES:
+        results["Hybrid Event"].append((n, event_baseline))
 
     for n in N_VALUES:
         print(f"\nBenchmarking N = {n} nodes...")
@@ -140,17 +158,6 @@ def benchmark():
             )
             iters.append(time.perf_counter() - t0)
         results["Hybrid Wave"].append((n, np.mean(iters)))
-
-        # 4. Hybrid Event (O(1))
-        # Note: Event model cost is fixed with respect to axon resolution N
-        print("  - Hybrid Event (Ours)...")
-        iters = []
-        for _ in range(N_ITER):
-            t0 = time.perf_counter()
-            # We simulate the reconstruction at a single destination point
-            prop.simulate(va_src_1us, t_ms_1us)
-            iters.append(time.perf_counter() - t0)
-        results["Hybrid Event"].append((n, np.mean(iters)))
 
     return results
 
@@ -214,21 +221,33 @@ def plot_results(results):
 
         # Plot markers and lines
         display_name = "Event Based (Ours)" if name == "Hybrid Event" else name
-        plt.loglog(
-            n_vals,
-            t_vals,
-            "o-",
-            color=COLORS[name],
-            label=display_name,
-            linewidth=2,
-            markersize=8,
-        )
+        # Event-Based model: solid line only (no markers) for O(1) horizontal line
+        # Other models: markers + line for O(N) scaling
+        if name == "Hybrid Event":
+            plt.loglog(
+                n_vals,
+                t_vals,
+                "-",
+                color=COLORS[name],
+                label=display_name,
+                linewidth=2,
+            )
+        else:
+            plt.loglog(
+                n_vals,
+                t_vals,
+                "o-",
+                color=COLORS[name],
+                label=display_name,
+                linewidth=2,
+                markersize=8,
+            )
 
     plt.grid(True, which="both", ls="-", alpha=0.3)
     plt.xlabel("Number of Spatial Compartments (N)", fontsize=16)
     plt.ylabel("Execution Time (s)", fontsize=16)
     plt.title("Spatial Complexity Scaling", fontsize=20, fontweight="bold")
-    plt.legend(fontsize=13, loc="center right")
+    plt.legend(fontsize=13, loc="upper left")
 
     # Final styling
     plt.tight_layout()

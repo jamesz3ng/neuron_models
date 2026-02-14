@@ -14,7 +14,7 @@ def run_2comp_simulation(
     g_couple_scale: float = 1.0,
     # Kinetic Scaling
     tau_m_scale_ais: float = 0.3, 
-    tau_h_scale_ais: float = 1.0, 
+    tau_h_scale_ais: float = 0.5, 
     tau_n_scale_ais: float = 0.5
 ):
     """
